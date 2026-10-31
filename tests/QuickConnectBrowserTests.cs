@@ -118,7 +118,10 @@ namespace NasDesk
                 await Task.Delay(150);
                 check(staleAttempts == 0 && core.Source == replacement
                     && core.DocumentTitle == "Replacement NAS fixture" && window.Address.AddressText == replacement,
-                    "Late verification completion never resumes the superseded connection or overwrites the new page");
+                    "Late verification completion never resumes the superseded connection or overwrites the new page"
+                    + " [staleAttempts=" + staleAttempts + "; source=" + core.Source
+                    + "; title=" + core.DocumentTitle + "; address=" + window.Address.AddressText
+                    + "; failure=" + window.IsFailureVisible + "; detail=" + window.FailureView.ErrorDetail + "]");
             }
             finally
             {

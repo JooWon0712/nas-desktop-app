@@ -4,7 +4,7 @@
 
 ## 다운로드와 실행
 
-**[Windows x64 프리뷰 ZIP 다운로드](https://github.com/JooWon0712/nas-desktop-app/releases/download/v0.8.0-preview.1/NasDesktop-windows-x64.zip)** · [릴리스 안내와 SHA-256](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.8.0-preview.1)
+**[Windows x64 프리뷰 ZIP 다운로드](https://github.com/JooWon0712/nas-desktop-app/releases/download/v0.9.0-preview.1/NasDesktop-windows-x64.zip)** · [릴리스 안내와 SHA-256](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.9.0-preview.1)
 
 1. ZIP을 내려받아 **폴더 전체를 압축 해제**합니다. GitHub의 `Code → Download ZIP`은 소스 코드입니다.
 2. `NasDesktop.exe`를 실행합니다. 같은 폴더의 DLL 세 개도 함께 있어야 합니다.
@@ -23,6 +23,8 @@ Windows 10/11 **x64**, **.NET Framework 4.8 이상**, **Microsoft Edge WebView2 
 - **연결 / Enter:** 유효한 주소와 방식을 저장·접속하고 닫힌 자물쇠와 **주소 잠김**으로 돌아갑니다. 잘못된 주소나 저장 실패 때는 수정할 수 있도록 입력을 유지합니다.
 - **Esc / 열린 자물쇠 버튼:** 주소와 방식의 미저장 변경을 함께 취소하고 잠급니다. 다른 곳을 클릭하는 것만으로 저장하거나 취소하지 않습니다. 자물쇠는 주소 편집 상태를 표시합니다.
 - **홈 / 새로 고침:** 저장된 NAS 홈 또는 현재 화면을 다시 엽니다.
+- **연결 실패 안내:** 브라우저 기본 오류 페이지 대신 앱 테마에 맞는 화면에서 주소·포트·네트워크·인증서·서버 응답에 따른 안내를 표시합니다. **다시 연결**로 재시도하고, **주소 수정**으로 입력창을 바로 편집합니다. 재시도 중에는 안내를 유지하고 연결에 성공하면 웹 화면을 다시 표시합니다. 로그인·권한 관련 401/403/407 응답은 NAS 화면을 유지합니다.
+- **웹 스크롤바:** 내용이 넘치는 문서·내부 영역의 기본 스크롤바를 14px와 명확한 명암으로 표시합니다. 페이지의 `overflow`, 크기, 배치는 덮어쓰지 않습니다. 제조사가 자체 요소로 그린 스크롤 UI는 유지합니다.
 - **테마 → 라이트 모드 / 다크 모드 / 시스템 설정 따르기:** 앱의 밝기를 선택합니다. 시스템 모드는 Windows의 앱 색 설정을 따르며, 설정 변경 시 트레이에 숨겨져 있어도 반영합니다. 라이트·다크를 직접 선택하면 Windows의 밝기 변경에 영향을 받지 않습니다.
 - **테마 → 색상 테마 / 트레이 → 색상 테마:** 차콜 블루·그래파이트 바이올렛·웜 앰버·포레스트 그린·세이지 올리브·네이비 민트 중 선택합니다. 모든 색상에 라이트·다크 조합을 제공합니다. 트레이의 **화면 모드**에서도 밝기를 바꿀 수 있습니다.
 - **다운로드:** NAS 웹 화면의 파일 받기를 사용합니다. 기본 다운로드 목록은 **Ctrl+J**로 열 수 있습니다.
@@ -81,5 +83,7 @@ C# 5 / WinForms / .NET Framework 4.8 / Microsoft.Web.WebView2 **1.0.4314.35**. P
 별도의 읽기 전용 실측에서 한 NAS의 QuickConnect ID로 시작해 직접 HTTPS 주소로 자동 전환되고 DSM 로그인 화면이 표시되는 것을 확인했습니다. 로그인은 수행하지 않았습니다. 이 결과가 모든 지역·릴레이·NAS 설정의 성공을 의미하지는 않습니다. 기기 식별값 비교는 Synology HTTPS 연결 정보에 더하는 일치 검사이며 암호학적 소유권 서명으로 설명하지 않습니다.
 
 주소줄·상태 배지·트레이 메뉴·테마 선택 메뉴는 100%·150% 배율과 최소 창 크기에서 렌더링을 확인했습니다. 밝기·색상 저장과 기존 설정 호환, 수동 모드 우선, 시스템 밝기 변경 시 숨겨진 창 갱신과 웹 문서·쿠키·미저장 주소 편집 유지도 격리된 테스트로 확인합니다. Windows의 실제 색 설정을 바꾸는 검사는 하지 않습니다. Windows 종료는 종료 이유별 분기 검사이며 실제 재부팅은 하지 않았습니다. 실제 트레이 아이콘을 직접 누르는 검사, NAS 재로그인·파일 업로드·패키지 호환성은 별도 확인이 필요합니다. GitHub Actions는 Windows 빌드와 공유 ZIP 생성 결과를 보관합니다.
+
+연결 실패는 닫힌 loopback HTTPS 포트로 재현하고 재시도·주소 수정·회복과 합성 HTTP 503/404/401/403 응답을 검사합니다. 스크롤바는 숨김 CSS가 있는 가상 문서·내부 영역·하위 프레임에서 표시와 실제 세로·가로 스크롤을 확인합니다. 주소줄은 크기 변경 시 프레임 전체를 다시 그려 이전 테두리가 남지 않도록 처리합니다. 오류 상태와 스크롤바 꾸밈을 위해 인증서 검증·CSP·웹 보안이나 Windows 설정을 완화하지 않습니다.
 
 구현 근거: [Synology QuickConnect 백서](https://kb.synology.com/en-us/WP/Synology_QuickConnect_White_Paper/4), [Synology 포털 연결 라이브러리](https://portal.quickconnect.to/connect_lib.da3fae9c5d057ef58d3a.bundle.js), [WebView2 WinForms](https://learn.microsoft.com/en-us/microsoft-edge/webview2/get-started/winforms), [프로세스 오류와 복구](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-related-events), [웹 프로필](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/user-data-folder), [WebView2 보안](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security), [Windows 앱 색 설정](https://learn.microsoft.com/en-us/windows/apps/develop/settings/settings-common), [Windows 설정 변경 알림](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-settingchange).

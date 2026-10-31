@@ -27,8 +27,9 @@ namespace NasDesk
         private ThemePalette appliedPalette;
         internal readonly AddressBar Address;
         private readonly string settingsPath;
-        private readonly Panel errorPanel;
-        private readonly Label errorText;
+        private readonly ConnectionFailureView errorPanel;
+        private bool failureShown;
+        private ulong activeNavigationId;
         private readonly Panel viewport;
         private Icon appIcon;
         private readonly ToolTip toolTips = new ToolTip();
@@ -48,6 +49,8 @@ namespace NasDesk
         internal bool Ready { get; private set; }
         internal Exception InitializationError { get; private set; }
         internal bool TrayVisible { get { return tray != null && tray.Visible; } }
+        internal bool IsFailureVisible { get { return failureShown; } }
+        internal ConnectionFailureView FailureView { get { return errorPanel; } }
 
         internal MainWindow(ConnectionSettings settings, string profilePath, bool testMode)
             : this(settings, profilePath, testMode, false, Program.SettingsPath) { }
@@ -137,14 +140,15 @@ namespace NasDesk
             footer.Items.Add(status);
             footer.Items.Add(new ToolStripStatusLabel { Text = "X로 닫아도 트레이에서 계속 실행", ForeColor = NasTheme.Muted });
 
-            errorPanel = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Surface, Visible = false };
-            Label errorTitle = new Label { Text = "연결을 확인해 주세요", Font = new Font("Malgun Gothic", 20F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(36, 45) };
-            errorText = new Label { AutoSize = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Location = new Point(38, 110), Size = new Size(620, 155), ForeColor = NasTheme.Muted, Font = new Font("Malgun Gothic", 10F), Text = "연결을 준비하고 있습니다." };
-            ShellButton retry = new ShellButton { Text = "다시 연결", Glyph = ShellGlyph.Refresh, Primary = true, Width = 144, Height = 42, Location = new Point(38, 280) };
-            retry.Click += async delegate { await ReconnectAsync(); };
-            errorPanel.Controls.Add(retry);
-            errorPanel.Controls.Add(errorText);
-            errorPanel.Controls.Add(errorTitle);
+            errorPanel = new ConnectionFailureView { Dock = DockStyle.Fill, Visible = false };
+            errorPanel.RetryRequested += async delegate { await ReconnectAsync(); };
+            errorPanel.EditAddressButton.Enabled = !popup;
+            errorPanel.EditAddressRequested += delegate
+            {
+                if (!Address.EditingEnabled) return;
+                Address.IsEditing = true;
+                status.Text = "접속 주소와 포트를 수정한 뒤 Enter 또는 연결을 눌러 주세요.";
+            };
             viewport = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Border, Padding = new Padding(1) };
             Panel workspace = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Padding = new Padding(20, 0, 20, 0) };
             viewport.Controls.Add(Browser);
@@ -154,7 +158,6 @@ namespace NasDesk
             Controls.Add(top);
             Controls.Add(footer);
             NasTheme.ApplyWindowChrome(this);
-            errorPanel.Resize += delegate { errorText.Width = Math.Max(200, errorPanel.ClientSize.Width - 76); };
 
             if (!popup)
             {
@@ -236,6 +239,7 @@ namespace NasDesk
             RecolorControls(this, appliedPalette);
             appliedPalette = NasTheme.Current;
             Address.RefreshTheme();
+            errorPanel.RefreshTheme();
             foreach (ToolStripMenuItem item in paletteItems)
                 item.Checked = (string)item.Tag == NasTheme.Current.Key;
             foreach (ToolStripMenuItem item in modeItems)
@@ -344,10 +348,12 @@ namespace NasDesk
                     viewport.Controls.Remove(Browser);
                     Browser.Dispose();
                     Browser = CreateBrowser();
+                    Browser.Visible = !failureShown;
                     viewport.Controls.Add(Browser);
                     errorPanel.BringToFront();
                     environment = null;
                     browserNeedsRecreation = false;
+                    activeNavigationId = 0;
                 }
                 CoreWebView2Environment.GetAvailableBrowserVersionString();
                 environment = sharedEnvironment ?? environment ?? await CoreWebView2Environment.CreateAsync(null, profilePath);
@@ -358,11 +364,16 @@ namespace NasDesk
                 await Browser.EnsureCoreWebView2Async(environment);
                 if (IsDisposed || Disposing) return;
                 CoreWebView2 core = Browser.CoreWebView2;
+                WebView2 initializedBrowser = Browser;
                 core.Settings.AreHostObjectsAllowed = false;
                 core.Settings.IsWebMessageEnabled = false;
                 core.Settings.IsPasswordAutosaveEnabled = false;
+                core.Settings.IsBuiltInErrorPageEnabled = false;
+                await core.AddScriptToExecuteOnDocumentCreatedAsync(BrowserScrollbarStyle.Script);
+                if (IsDisposed || Disposing || !Object.ReferenceEquals(Browser, initializedBrowser)) return;
                 core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
                 {
+                    if (IsDisposed || exitRequested || !Object.ReferenceEquals(Browser, initializedBrowser)) { e.Cancel = true; return; }
                     if (!connection.Allows(e.Uri))
                     {
                         e.Cancel = true;
@@ -373,19 +384,29 @@ namespace NasDesk
                         else status.Text = "설정한 NAS와 관련 없는 주소로의 이동을 차단했습니다.";
                         return;
                     }
+                    activeNavigationId = e.NavigationId;
                     InvalidatePendingNavigation();
-                    errorPanel.Visible = false;
+                    if (failureShown) errorPanel.SetBusy(true);
                     status.Text = "NAS에 안전하게 연결하고 있습니다.";
                     SetConnectionState("연결 중", NasTheme.Muted);
                 };
                 core.NavigationCompleted += delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
                 {
+                    if (IsDisposed || exitRequested || !Ready || !Object.ReferenceEquals(Browser, initializedBrowser)
+                        || e.NavigationId != activeNavigationId) return;
+                    if (!e.IsSuccess && e.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled)
+                    {
+                        if (failureShown) errorPanel.SetBusy(false);
+                        return;
+                    }
+                    ConnectionFailureInfo httpFailure = ConnectionFailureInfo.FromHttpStatus(e.HttpStatusCode);
+                    if (httpFailure != null) { ShowError(httpFailure); return; }
                     if (e.IsSuccess)
                     {
                         if (!connection.Allows(core.Source)) return;
                         if (ConnectionSettings.IsValid(core.Source))
                             lastLoadedUrl = core.Source;
-                        errorPanel.Visible = false;
+                        ShowBrowser();
                         if (connection.IsQuickConnect && core.Source != "about:blank" && !connection.IsNasOrigin(core.Source))
                         {
                             status.Text = "QuickConnect에서 NAS 연결 경로를 선택하고 있습니다.";
@@ -395,8 +416,17 @@ namespace NasDesk
                         status.Text = core.Source == "about:blank" ? "웹 화면 준비 완료" : (connection.IsQuickConnect ? "QuickConnect · " : "HTTPS · ") + new Uri(core.Source).Authority;
                         SetConnectionState("연결됨", NasTheme.Accent);
                     }
-                    else if (e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
-                        ShowError("NAS에 연결하지 못했습니다: " + e.WebErrorStatus + "\n네트워크, NAS 전원, 접속 주소를 확인한 뒤 다시 연결하세요. 인증서 오류는 브라우저에서도 확인해 주세요.");
+                    else
+                    {
+                        ConnectionFailureInfo failure = ConnectionFailureInfo.FromWebError(e.WebErrorStatus, e.HttpStatusCode);
+                        if (failure != null) ShowError(failure);
+                        else
+                        {
+                            ShowBrowser();
+                            status.Text = "NAS의 로그인 또는 권한 안내를 확인해 주세요.";
+                            SetConnectionState("연결 확인", NasTheme.Warning);
+                        }
+                    }
                 };
                 core.NewWindowRequested += OnNewWindowRequested;
                 core.WindowCloseRequested += delegate { if (popup) RequestExit(); };
@@ -405,7 +435,10 @@ namespace NasDesk
                     if (!connection.IsNasOrigin(e.Uri)) e.State = CoreWebView2PermissionState.Deny;
                 };
                 core.LaunchingExternalUriScheme += delegate(object sender, CoreWebView2LaunchingExternalUriSchemeEventArgs e) { e.Cancel = true; };
-                core.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs e) { HandleProcessFailure(e.ProcessFailedKind); };
+                core.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs e)
+                {
+                    if (Object.ReferenceEquals(Browser, initializedBrowser)) HandleProcessFailure(e.ProcessFailedKind);
+                };
                 InitializationError = null;
                 Ready = true;
                 if (!popup)
@@ -487,15 +520,20 @@ namespace NasDesk
         internal async Task ReconnectAsync()
         {
             if (IsDisposed || Disposing || exitRequested) return;
-            if (!Ready) await InitializeAsync(null);
-            else if (!popup) NavigateHome();
-            if (Ready && popup)
+            if (failureShown) errorPanel.SetBusy(true);
+            try
             {
-                string target = ConnectionSettings.IsValid(lastLoadedUrl) && connection.Allows(lastLoadedUrl)
-                    ? lastLoadedUrl : settings.Url;
-                errorPanel.Visible = false;
-                Browser.CoreWebView2.Navigate(target);
+                if (!Ready) await InitializeAsync(null);
+                else if (!popup) NavigateHome();
+                if (Ready && popup)
+                {
+                    string target = ConnectionSettings.IsValid(lastLoadedUrl) && connection.Allows(lastLoadedUrl)
+                        ? lastLoadedUrl : settings.Url;
+                    Browser.CoreWebView2.Navigate(target);
+                }
             }
+            catch (InvalidOperationException) { ShowError("웹 화면을 다시 준비하지 못했습니다. 잠시 후 다시 연결해 주세요."); }
+            catch (System.Runtime.InteropServices.COMException) { ShowError("웹 화면을 다시 준비하지 못했습니다. 잠시 후 다시 연결해 주세요."); }
         }
 
         private async void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -543,18 +581,50 @@ namespace NasDesk
 
         private void ShowError(string message)
         {
-            errorText.Text = message;
+            ShowFailure("연결을 확인해 주세요", message, null);
+        }
+
+        private void ShowError(ConnectionFailureInfo failure)
+        {
+            ShowFailure(failure.Title, failure.Description, failure.Detail);
+        }
+
+        private void ShowFailure(string title, string description, string detail)
+        {
+            if (IsDisposed || Disposing || exitRequested) return;
+            failureShown = true;
+            errorPanel.SetError(title, description, detail);
+            SetBrowserVisibility(false);
             errorPanel.Visible = true;
             errorPanel.BringToFront();
             status.Text = "연결 확인 필요 · 주소 수정 / 다시 연결";
             SetConnectionState("연결 확인", NasTheme.Warning);
         }
 
+        private void ShowBrowser()
+        {
+            failureShown = false;
+            errorPanel.SetBusy(false);
+            errorPanel.Visible = false;
+            SetBrowserVisibility(true);
+        }
+
+        private void SetBrowserVisibility(bool visible)
+        {
+            if (Browser.IsDisposed) return;
+            try
+            {
+                Browser.Visible = visible;
+                if (visible) Browser.BringToFront();
+            }
+            catch (InvalidOperationException) { }
+            catch (System.Runtime.InteropServices.COMException) { }
+        }
+
         private void NavigateHome()
         {
             if (!Ready) return;
             InvalidatePendingNavigation();
-            errorPanel.Visible = false;
             Browser.CoreWebView2.Navigate(settings.Url);
         }
 
@@ -562,11 +632,11 @@ namespace NasDesk
         {
             if (!Ready) return;
             InvalidatePendingNavigation();
-            if (errorPanel.Visible) NavigateHome();
+            if (failureShown) NavigateHome();
             else Browser.Reload();
         }
 
-        private void ApplyAddress()
+        private async void ApplyAddress()
         {
             string value = Address.AddressText.Trim();
             ConnectionSettings candidate;
@@ -589,10 +659,12 @@ namespace NasDesk
                 navigationCheck = null;
                 navigationRequest++;
                 lastLoadedUrl = null;
+                activeNavigationId = 0;
                 settings.Url = address;
                 settings.Type = candidate.Type;
                 Address.SetAddress(address, candidate.Kind);
-                NavigateHome();
+                if (Ready) NavigateHome();
+                else await ReconnectAsync();
             }
             catch (Exception error) { status.Text = "주소를 저장하지 못했습니다: " + error.Message; }
         }

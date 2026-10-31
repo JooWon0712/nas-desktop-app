@@ -62,6 +62,7 @@ namespace NasDesk
             QuickConnectResolverTests.Run(Check);
             AppearanceSettingsTests.Run(output, Check);
             ThemeModeTests.Run(Check);
+            ConnectionFailureInfoTests.Run(Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -130,6 +131,8 @@ namespace NasDesk
             Check(blocked, "Unconfigured origin blocked");
             await QuickConnectBrowserTests.RunAsync(output, fixture, Check);
             await GenericNasBrowserTests.RunAsync(output, fixture, Check);
+            await ConnectionFailureBrowserTests.RunAsync(output, fixture, Check);
+            await BrowserScrollbarTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
             await AddressAutoEditTests.RunAsync(window, core, uiSettingsPath, Check);
             await RunRecoveryTests(window, core);
@@ -233,7 +236,17 @@ namespace NasDesk
             NasTheme.RefreshSystemAppearance(!NasTheme.IsDark);
             Check(!window.Ready && !window.IsDisposed && window.BackColor == NasTheme.Background,
                 "System mode updates during a browser process failure do not interrupt the app");
-            await window.ReconnectAsync();
+            bool recreatedWhileHidden = false;
+            Control viewport = window.Browser.Parent;
+            ControlEventHandler observeRecreation = delegate(object sender, ControlEventArgs e)
+            {
+                if (Object.ReferenceEquals(e.Control, window.Browser) && !Object.ReferenceEquals(e.Control, originalBrowser))
+                    recreatedWhileHidden = window.IsFailureVisible && !e.Control.Visible;
+            };
+            viewport.ControlAdded += observeRecreation;
+            try { await window.ReconnectAsync(); }
+            finally { viewport.ControlAdded -= observeRecreation; }
+            Check(recreatedWhileHidden, "The replacement browser remains hidden while the failure screen prepares its engine");
             Check(window.Ready && originalBrowser.IsDisposed && !Object.ReferenceEquals(originalBrowser, window.Browser)
                 && window.Browser.CoreWebView2.Environment.UserDataFolder == profile,
                 "Actual browser crash recreates the control and retains its profile");

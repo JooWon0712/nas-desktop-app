@@ -52,6 +52,7 @@ namespace NasDesk
         internal AddressBar()
         {
             SuspendLayout();
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
             Height = 42;
@@ -64,7 +65,7 @@ namespace NasDesk
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
-            inputFrame = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Margin = new Padding(0, 0, 8, 0), Padding = new Padding(12, 0, 12, 0) };
+            inputFrame = new AddressInputFrame { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Margin = new Padding(0, 0, 8, 0), Padding = new Padding(12, 0, 12, 0) };
             inputFrame.Paint += delegate(object sender, PaintEventArgs e)
             {
                 if (inputFrame.Width < 2 || inputFrame.Height < 2) return;
@@ -88,7 +89,7 @@ namespace NasDesk
             TypePicker.EditRequested += delegate { BeginEditing(false, false); };
             inputFrame.Controls.Add(TypePicker);
             inputFrame.Controls.Add(Input);
-            inputFrame.Resize += delegate { LayoutInput(); };
+            inputFrame.Resize += delegate { LayoutInput(); inputFrame.Invalidate(true); };
             Input.FontChanged += delegate { LayoutInput(); };
             LockButton = new AddressLockButton { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0), TabIndex = 1 };
             ConnectButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
@@ -206,6 +207,15 @@ namespace NasDesk
         {
             if (disposing) toolTips.Dispose();
             base.Dispose(disposing);
+        }
+    }
+
+    internal sealed class AddressInputFrame : Panel
+    {
+        internal AddressInputFrame()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         }
     }
 }

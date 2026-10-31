@@ -73,32 +73,16 @@ namespace NasDesk
 
                 HashSet<Form> existing = new HashSet<Form>(Application.OpenForms.Cast<Form>());
                 string popupUrl = new Uri(home, "popup.html").AbsoluteUri;
-                CoreWebView2Deferral popupDeferral = null;
-                EventHandler<CoreWebView2NewWindowRequestedEventArgs> deferPopup = delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e)
-                {
-                    popupDeferral = e.GetDeferral();
-                };
-                core.NewWindowRequested += deferPopup;
-                try
-                {
-                    Task opening = core.ExecuteScriptAsync("window.open('" + popupUrl + "','generic_popup_" + index + "');");
-                    await WaitFor(() => {
-                        popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !existing.Contains(form));
-                        return popupDeferral != null && popup != null && popup.Ready;
-                    }, "Same-origin generic HTTPS popup creation");
-                    // Virtual-host mappings belong to each test WebView, not its
-                    // shared profile. Supply the child's fixture before navigation.
-                    popup.Browser.CoreWebView2.SetVirtualHostNameToFolderMapping(home.DnsSafeHost, pages, CoreWebView2HostResourceAccessKind.DenyCors);
-                    popupDeferral.Complete();
-                    popupDeferral = null;
-                    await opening;
-                    await WaitFor(() => popup.Browser.CoreWebView2.DocumentTitle == "Generic HTTPS popup fixture", "Same-origin generic HTTPS popup page");
-                }
-                finally
-                {
-                    core.NewWindowRequested -= deferPopup;
-                    if (popupDeferral != null) popupDeferral.Complete();
-                }
+                await core.ExecuteScriptAsync("window.open('about:blank','generic_popup_" + index + "');");
+                await WaitFor(() => {
+                    popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !existing.Contains(form));
+                    return popup != null && popup.Ready;
+                }, "Same-origin generic HTTPS popup creation");
+                // Start with an inherited blank document: virtual-host mappings
+                // are per WebView and must exist before this synthetic URL loads.
+                popup.Browser.CoreWebView2.SetVirtualHostNameToFolderMapping(home.DnsSafeHost, pages, CoreWebView2HostResourceAccessKind.DenyCors);
+                popup.Browser.CoreWebView2.Navigate(popupUrl);
+                await WaitFor(() => popup.Browser.CoreWebView2.DocumentTitle == "Generic HTTPS popup fixture", "Same-origin generic HTTPS popup page");
                 check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("generic_nas_fixture=" + name)
                     && await popup.Browser.CoreWebView2.ExecuteScriptAsync("localStorage.getItem('generic_nas_fixture')") == "\"" + name + "\"",
                     "Synthetic direct HTTPS " + name + " popup shares its configured NAS cookies and storage");
