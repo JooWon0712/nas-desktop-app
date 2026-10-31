@@ -48,12 +48,34 @@ jobs:
         with:
           name: NasDesktop-windows-x64
           path: dist
-      - name: Attest the CI-built ZIP
+      - name: Extract the exact packaged executable
+        working-directory: dist
+        run: |
+          sha256sum --check SHA256SUMS.txt
+          unzip -p NasDesktop-windows-x64.zip NasDesktop.exe > NasDesktop.exe
+          test -s NasDesktop.exe
+      - name: Attest the CI-built ZIP and executable
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: dist/NasDesktop-windows-x64.zip
+          subject-path: |
+            dist/NasDesktop-windows-x64.zip
+            dist/NasDesktop.exe
           create-storage-record: false
+      - name: Verify both subjects before exporting provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTESTATION_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          for artifact in dist/NasDesktop-windows-x64.zip dist/NasDesktop.exe; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$ATTESTATION_BUNDLE" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners
+          done
       - name: Upload build provenance bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

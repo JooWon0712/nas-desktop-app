@@ -94,11 +94,16 @@ $actualHash -eq $expectedHash
 
 `True`가 나오면 해시가 일치합니다. SHA-256 일치 확인은 파일 무결성 확인 수단이며 게시자 코드 서명이나 보안 감사를 대신하지 않습니다. 빌드·패키징 방법과 검증 범위는 [개발/검증](DEVELOPMENT.md)을 참고하세요.
 
-현재 CI 구성은 공개 저장소의 기본 브랜치에서 만든 ZIP에 GitHub 빌드 출처 증명을 생성하도록 되어 있습니다. 실제 증명이 생성된 **해당 CI 산출물**만 다음 명령으로 확인할 수 있습니다. 로컬에서 따로 만든 ZIP이나 이전 공개 릴리스에 이 증명이 적용됐다고 보장하지 않습니다. 출처 증명은 Windows Authenticode 코드 서명과도 구분됩니다.
+v0.15.0부터 공개 릴리스는 GitHub Actions에서 EXE와 ZIP을 빌드하고, **ZIP 및 그 안의 `NasDesktop.exe`를 함께 기록한 출처 증명**을 제공합니다. 증명은 파일 해시와 소스 저장소·커밋·워크플로의 관계를 확인하는 수단입니다. 로컬에서 따로 만든 파일이나 이전 공개 릴리스에 같은 증명이 적용됐다고 보장하지 않습니다. Windows Authenticode 코드 서명이나 앱의 무결점·무해함을 보장하는 보안 인증은 아닙니다.
+
+ZIP과 함께 `NasDesktop-windows-x64.sigstore.json`을 내려받고, ZIP의 네 파일을 같은 폴더로 압축 해제한 뒤 GitHub CLI로 각각 확인할 수 있습니다.
 
 ```powershell
-gh attestation verify .\NasDesktop-windows-x64.zip -R JooWon0712/nas-desktop-app
+gh attestation verify .\NasDesktop-windows-x64.zip -R JooWon0712/nas-desktop-app --bundle .\NasDesktop-windows-x64.sigstore.json --signer-workflow JooWon0712/nas-desktop-app/.github/workflows/build.yml --deny-self-hosted-runners
+gh attestation verify .\NasDesktop.exe -R JooWon0712/nas-desktop-app --bundle .\NasDesktop-windows-x64.sigstore.json --signer-workflow JooWon0712/nas-desktop-app/.github/workflows/build.yml --deny-self-hosted-runners
 ```
+
+CI와 배포 전 검증은 추가로 `--source-ref refs/heads/main --source-digest <릴리스 태그가 가리키는 커밋 SHA>`를 지정해 소스 버전도 고정합니다. 명령의 의미는 [GitHub CLI 공식 안내](https://cli.github.com/manual/gh_attestation_verify)를 참고하세요.
 
 ## 문제와 취약점 제보
 

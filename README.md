@@ -4,6 +4,8 @@ NAS 웹 관리 화면을 전용 창에서 사용하는 **Windows 10/11 x64 전�
 
 **[Windows ZIP 다운로드](https://github.com/JooWon0712/nas-desktop-app/releases/download/v0.15.0-preview.1/NasDesktop-windows-x64.zip)** · [릴리스·체크섬](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.15.0-preview.1)
 
+릴리스는 GitHub Actions에서 빌드하며 **ZIP과 EXE의 출처 증명**을 제공합니다. [검증 방법](docs/SECURITY.md#배포-파일과-무결성-확인)을 참고하세요.
+
 ## 주요 기능
 
 - 작업 표시줄 최소화와 기본 창 X로 앱 종료
