@@ -57,6 +57,7 @@ namespace NasDesk
         internal const string AppName = "Synology NAS Desktop";
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NasDesk");
         internal static readonly string SettingsPath = Path.Combine(DataDirectory, "connection.json");
+        internal static readonly string AppearancePath = Path.Combine(DataDirectory, "appearance.json");
         internal static readonly string ProfileDirectory = Path.Combine(DataDirectory, "WebView2");
 
         [STAThread]
@@ -64,6 +65,7 @@ namespace NasDesk
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            NasTheme.SetPalette(AppearanceSettings.Read(AppearancePath));
             bool first;
             using (Mutex instance = new Mutex(true, @"Local\NasDesk.Instance.v1", out first))
             using (EventWaitHandle activate = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\NasDesk.Activate.v1"))

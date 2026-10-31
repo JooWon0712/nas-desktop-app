@@ -102,6 +102,19 @@ namespace NasDesk
             ApplyEditing();
         }
 
+        internal void RefreshTheme()
+        {
+            BackColor = NasTheme.Background;
+            inputFrame.BackColor = NasTheme.Background;
+            Input.BackColor = NasTheme.Surface;
+            Input.ForeColor = IsEditing ? NasTheme.Text : NasTheme.Muted;
+            EditSwitch.BackColor = NasTheme.Background;
+            EditSwitch.ForeColor = NasTheme.Text;
+            ConnectButton.BackColor = NasTheme.Surface;
+            ConnectButton.ForeColor = NasTheme.Text;
+            Invalidate(true);
+        }
+
         private void RequestConnection()
         {
             if (!IsEditing) return;

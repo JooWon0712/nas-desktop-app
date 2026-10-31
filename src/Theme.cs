@@ -6,16 +6,111 @@ using System.Windows.Forms;
 
 namespace NasDesk
 {
+    internal sealed class ThemePalette
+    {
+        internal string Key { get; private set; }
+        internal string Name { get; private set; }
+        internal Color Background { get; private set; }
+        internal Color Surface { get; private set; }
+        internal Color Border { get; private set; }
+        internal Color Text { get; private set; }
+        internal Color Muted { get; private set; }
+        internal Color Accent { get; private set; }
+        internal Color Hover { get; private set; }
+        internal Color Pressed { get; private set; }
+        internal Color Success { get; private set; }
+        internal Color Warning { get; private set; }
+        internal Color Danger { get; private set; }
+        internal Color AccentText { get; private set; }
+
+        internal ThemePalette(string key, string name, Color background, Color surface, Color border,
+            Color text, Color muted, Color accent, Color hover, Color pressed,
+            Color success, Color warning, Color danger, Color accentText)
+        {
+            Key = key;
+            Name = name;
+            Background = background;
+            Surface = surface;
+            Border = border;
+            Text = text;
+            Muted = muted;
+            Accent = accent;
+            Hover = hover;
+            Pressed = pressed;
+            Success = success;
+            Warning = warning;
+            Danger = danger;
+            AccentText = accentText;
+        }
+    }
+
     internal static class NasTheme
     {
-        internal static readonly Color Background = Color.FromArgb(17, 22, 30);
-        internal static readonly Color Surface = Color.FromArgb(25, 33, 44);
-        internal static readonly Color Border = Color.FromArgb(42, 53, 68);
-        internal static readonly Color Text = Color.FromArgb(233, 238, 246);
-        internal static readonly Color Muted = Color.FromArgb(142, 155, 170);
-        internal static readonly Color Accent = Color.FromArgb(89, 214, 176);
-        internal static readonly Color Hover = Color.FromArgb(37, 49, 64);
-        internal static readonly Color Pressed = Color.FromArgb(45, 60, 76);
+        private static readonly ThemePalette[] palettes = new ThemePalette[]
+        {
+            new ThemePalette("charcoal-blue", "차콜 블루",
+                Rgb(0x121419), Rgb(0x1B1E25), Rgb(0x303540), Rgb(0xF0F3F9),
+                Rgb(0xA1AAB9), Rgb(0x83B4FF), Rgb(0x262B35), Rgb(0x2F3642),
+                Rgb(0x83B4FF), Rgb(0xF1C374), Rgb(0xF2919A), Rgb(0x131B29)),
+            new ThemePalette("violet", "그래파이트 바이올렛",
+                Rgb(0x17161D), Rgb(0x211F2A), Rgb(0x3B354B), Rgb(0xF2EFF9),
+                Rgb(0xAEA5BF), Rgb(0xB7A1FF), Rgb(0x302B3D), Rgb(0x3B344C),
+                Rgb(0xB7A1FF), Rgb(0xE8C28A), Rgb(0xF298AF), Rgb(0x211A30)),
+            new ThemePalette("amber", "웜 앰버",
+                Rgb(0x1A1714), Rgb(0x24201C), Rgb(0x40372E), Rgb(0xF7F3ED),
+                Rgb(0xB1A496), Rgb(0xF2BD78), Rgb(0x312B25), Rgb(0x3D342B),
+                Rgb(0xF2BD78), Rgb(0xEBD887), Rgb(0xF49B91), Rgb(0x2B2016)),
+            new ThemePalette("mint", "네이비 민트",
+                Rgb(0x11161E), Rgb(0x19212C), Rgb(0x2A3544), Rgb(0xE9EEF6),
+                Rgb(0x8E9BAA), Rgb(0x59D6B0), Rgb(0x253140), Rgb(0x2D3C4C),
+                Rgb(0x59D6B0), Rgb(0xF0C284), Rgb(0xF2919A), Rgb(0x10251E))
+        };
+        private static ThemePalette current = palettes[0];
+
+        internal static event EventHandler Changed;
+
+        internal static ThemePalette[] Palettes { get { return (ThemePalette[])palettes.Clone(); } }
+        internal static ThemePalette Current { get { return current; } }
+        internal static Color Background { get { return current.Background; } }
+        internal static Color Surface { get { return current.Surface; } }
+        internal static Color Border { get { return current.Border; } }
+        internal static Color Text { get { return current.Text; } }
+        internal static Color Muted { get { return current.Muted; } }
+        internal static Color Accent { get { return current.Accent; } }
+        internal static Color Hover { get { return current.Hover; } }
+        internal static Color Pressed { get { return current.Pressed; } }
+        internal static Color Success { get { return current.Success; } }
+        internal static Color Warning { get { return current.Warning; } }
+        internal static Color Danger { get { return current.Danger; } }
+        internal static Color AccentText { get { return current.AccentText; } }
+
+        internal static bool SetPalette(string key)
+        {
+            foreach (ThemePalette palette in palettes)
+            {
+                if (!String.Equals(palette.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
+                if (Object.ReferenceEquals(current, palette)) return true;
+                current = palette;
+                EventHandler handler = Changed;
+                if (handler != null) handler(null, EventArgs.Empty);
+                return true;
+            }
+            return false;
+        }
+
+        private static Color Rgb(int value)
+        {
+            return Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255);
+        }
+
+        internal static Color Blend(Color start, Color end, float amount)
+        {
+            amount = Math.Max(0, Math.Min(1, amount));
+            return Color.FromArgb(
+                (int)Math.Round(start.R + (end.R - start.R) * amount),
+                (int)Math.Round(start.G + (end.G - start.G) * amount),
+                (int)Math.Round(start.B + (end.B - start.B) * amount));
+        }
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr handle, int attribute, ref int value, int size);
@@ -26,8 +121,19 @@ namespace NasDesk
         internal static void ApplyWindowChrome(Form form)
         {
             if (form == null) return;
-            form.HandleCreated += delegate { if (!form.IsDisposed) ApplyChrome(form.Handle); };
-            if (form.IsHandleCreated) ApplyChrome(form.Handle);
+            form.HandleCreated -= OnWindowHandleCreated;
+            form.HandleCreated += OnWindowHandleCreated;
+            RefreshWindowChrome(form);
+        }
+
+        internal static void RefreshWindowChrome(Form form)
+        {
+            if (form != null && !form.IsDisposed && form.IsHandleCreated) ApplyChrome(form.Handle);
+        }
+
+        private static void OnWindowHandleCreated(object sender, EventArgs e)
+        {
+            RefreshWindowChrome(sender as Form);
         }
 
         private static void ApplyChrome(IntPtr handle)
@@ -176,11 +282,11 @@ namespace NasDesk
             float scale = e.Graphics.DpiX / 96F;
             RectangleF bounds = new RectangleF(0.5F, 0.5F, Math.Max(1, ClientSize.Width - 1), Math.Max(1, ClientSize.Height - 1));
             Color fill = primary ? NasTheme.Accent : pressed ? NasTheme.Pressed : hover ? NasTheme.Hover : NasTheme.Surface;
-            Color foreground = primary ? NasTheme.Background : NasTheme.Text;
+            Color foreground = primary ? NasTheme.AccentText : NasTheme.Text;
             Color line = primary ? NasTheme.Accent : NasTheme.Border;
             if (!Enabled) { fill = NasTheme.Surface; foreground = NasTheme.Muted; line = NasTheme.Border; }
-            else if (primary && pressed) fill = Color.FromArgb(66, 178, 145);
-            else if (primary && hover) fill = Color.FromArgb(119, 231, 197);
+            else if (primary && pressed) fill = NasTheme.Blend(NasTheme.Accent, NasTheme.Background, 0.18F);
+            else if (primary && hover) fill = NasTheme.Blend(NasTheme.Accent, Color.White, 0.12F);
             if (SystemInformation.HighContrast)
             {
                 fill = primary ? SystemColors.Highlight : SystemColors.Control;

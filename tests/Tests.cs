@@ -59,6 +59,7 @@ namespace NasDesk
         {
             ConnectionAddressTests.Run(Check);
             QuickConnectResolverTests.Run(Check);
+            AppearanceSettingsTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -98,6 +99,7 @@ namespace NasDesk
             await WaitFor(() => core.DocumentTitle == "NAS Desk local fixture", 10000, "Local HTTPS fixture");
             Check(!core.Settings.AreHostObjectsAllowed && !core.Settings.IsWebMessageEnabled, "Native host bridge disabled");
             Check((await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "HTTPS cookies work");
+            await RunThemeTests(window, core);
             await core.ExecuteScriptAsync("window.open('about:blank', 'nas_desk_popup')");
             await WaitFor(() => Application.OpenForms.Count >= 2, 10000, "Same-profile popup");
             MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
@@ -126,6 +128,28 @@ namespace NasDesk
             await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
             Check(window.IsDisposed && popup.IsDisposed && !window.TrayVisible, "Explicit exit disposes windows and tray");
+        }
+
+        private static async Task RunThemeTests(MainWindow window, CoreWebView2 core)
+        {
+            string originalTheme = NasTheme.Current.Key;
+            string source = core.Source;
+            string committed = window.Address.AddressText;
+            await core.ExecuteScriptAsync("window.themeChangeMarker='same-document';");
+            window.Address.IsEditing = true;
+            window.Address.AddressText = "https://unsaved.example.test/";
+            window.SelectPalette("violet");
+            Check(AppearanceSettings.Read(uiSettingsPath + ".appearance.json") == "violet"
+                && NasTheme.Current.Key == "violet", "Theme selection persists in isolated appearance settings");
+            Check(Object.ReferenceEquals(core, window.Browser.CoreWebView2) && core.Source == source
+                && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\""
+                && (await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"),
+                "Theme change retains the current web document and login storage");
+            Check(window.Address.IsEditing && window.Address.AddressText == "https://unsaved.example.test/"
+                && ConnectionSettings.Read(uiSettingsPath).Url == committed,
+                "Theme change preserves an unsaved address edit and saved NAS address");
+            window.Address.IsEditing = false;
+            window.SelectPalette(originalTheme);
         }
 
         private static async Task RunDownloadTests(CoreWebView2 core)

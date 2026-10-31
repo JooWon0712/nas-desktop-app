@@ -20,13 +20,16 @@ namespace NasDesk
         private readonly List<MainWindow> hiddenChildren = new List<MainWindow>();
         private readonly NotifyIcon tray;
         private readonly ToolStripStatusLabel status;
-        private readonly Label connectionBadge;
+        private readonly ConnectionStatusBadge connectionBadge;
+        private readonly ContextMenuStrip themeMenu;
+        private readonly List<ToolStripMenuItem> paletteItems = new List<ToolStripMenuItem>();
+        private ThemePalette appliedPalette;
         internal readonly AddressBar Address;
         private readonly string settingsPath;
         private readonly Panel errorPanel;
         private readonly Label errorText;
         private readonly Panel viewport;
-        private readonly Icon appIcon;
+        private Icon appIcon;
         private readonly ToolTip toolTips = new ToolTip();
         private bool exitRequested;
         private bool balloonShown;
@@ -64,6 +67,7 @@ namespace NasDesk
             this.testMode = testMode;
             this.popup = popup;
             this.settingsPath = settingsPath;
+            appliedPalette = NasTheme.Current;
             connection = session ?? new ConnectionSession(settings.Url);
             Text = Program.AppName;
             Font = new Font("Malgun Gothic", 9F);
@@ -86,9 +90,21 @@ namespace NasDesk
             Label brandTitle = new Label { Text = "Synology NAS", Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(56, 13) };
             Label brandSubtitle = new Label { Text = "D E S K T O P   W O R K S P A C E", Font = new Font("Segoe UI", 7.3F), ForeColor = NasTheme.Muted, AutoSize = true, Location = new Point(59, 48) };
             brand.Controls.AddRange(new Control[] { logo, brandTitle, brandSubtitle });
-            Panel connectionPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 24, 0, 21) };
-            connectionBadge = new Label { Text = "●  연결 준비", AutoSize = false, Dock = DockStyle.Right, Width = 115, TextAlign = ContentAlignment.MiddleCenter, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
-            connectionPanel.Controls.Add(connectionBadge);
+            Panel connectionPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 20, 0, 20) };
+            TableLayoutPanel appearance = new TableLayoutPanel { Dock = DockStyle.Right, Width = 208, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
+            appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            appearance.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            connectionBadge = new ConnectionStatusBadge { Dock = DockStyle.Fill, Margin = Padding.Empty, Font = new Font("Malgun Gothic", 9F) };
+            themeMenu = new ContextMenuStrip { Font = new Font("Malgun Gothic", 9F) };
+            AddPaletteItems(themeMenu.Items);
+            TrayMenuStyle.Configure(themeMenu);
+            ShellButton themeButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "테마", Glyph = ShellGlyph.Settings, AccessibleName = "색상 테마 선택" };
+            themeButton.Click += delegate { themeMenu.Show(themeButton, new Point(themeButton.Width - themeMenu.GetPreferredSize(Size.Empty).Width, themeButton.Height + 6)); };
+            appearance.Controls.Add(connectionBadge, 0, 0);
+            appearance.Controls.Add(themeButton, 2, 0);
+            connectionPanel.Controls.Add(appearance);
             header.Controls.Add(brand, 0, 0);
             header.Controls.Add(connectionPanel, 1, 0);
             TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 48, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
@@ -144,13 +160,81 @@ namespace NasDesk
                 menu.Items.Add("NAS 창 열기", null, delegate { RestoreFromTray(); });
                 menu.Items.Add("새로 고침", null, delegate { ReloadPage(); });
                 menu.Items.Add(new ToolStripSeparator());
+                ToolStripMenuItem themes = new ToolStripMenuItem("색상 테마");
+                AddPaletteItems(themes.DropDownItems);
+                menu.Items.Add(themes);
+                menu.Items.Add(new ToolStripSeparator());
                 menu.Items.Add("완전 종료", null, delegate { RequestExit(); });
+                TrayMenuStyle.Configure(menu);
                 tray = new NotifyIcon { Text = Program.AppName, Icon = appIcon, ContextMenuStrip = menu, Visible = true };
                 tray.DoubleClick += delegate { RestoreFromTray(); };
                 tray.BalloonTipClicked += delegate { RestoreFromTray(); };
                 Shown += async delegate { await InitializeAsync(null); };
             }
+            NasTheme.Changed += OnThemeChanged;
             ResumeLayout(true);
+        }
+
+        private void AddPaletteItems(ToolStripItemCollection items)
+        {
+            foreach (ThemePalette palette in NasTheme.Palettes)
+            {
+                string key = palette.Key;
+                ToolStripMenuItem item = new ToolStripMenuItem(palette.Name) { Tag = key, Checked = key == NasTheme.Current.Key };
+                item.Click += delegate { SelectPalette(key); };
+                paletteItems.Add(item);
+                items.Add(item);
+            }
+        }
+
+        internal void SelectPalette(string key)
+        {
+            try
+            {
+                AppearanceSettings.Save(testMode ? settingsPath + ".appearance.json" : Program.AppearancePath, key);
+                NasTheme.SetPalette(key);
+            }
+            catch (Exception error) { status.Text = "테마를 저장하지 못했습니다: " + error.Message; }
+        }
+
+        private void OnThemeChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed || Disposing) return;
+            RecolorControls(this, appliedPalette);
+            appliedPalette = NasTheme.Current;
+            Address.RefreshTheme();
+            foreach (ToolStripMenuItem item in paletteItems)
+                item.Checked = (string)item.Tag == NasTheme.Current.Key;
+            NasTheme.RefreshWindowChrome(this);
+            Icon previous = appIcon;
+            appIcon = NasTheme.CreateIcon();
+            Icon = appIcon;
+            if (tray != null) tray.Icon = appIcon;
+            previous.Dispose();
+            Invalidate(true);
+        }
+
+        private static void RecolorControls(Control control, ThemePalette previous)
+        {
+            // Web content owns its colors and keeps the current document/session.
+            if (control is WebView2) return;
+            control.BackColor = Recolor(control.BackColor, previous);
+            control.ForeColor = Recolor(control.ForeColor, previous);
+            ToolStrip strip = control as ToolStrip;
+            if (strip != null)
+                foreach (ToolStripItem item in strip.Items) item.ForeColor = NasTheme.Muted;
+            foreach (Control child in control.Controls) RecolorControls(child, previous);
+            control.Invalidate();
+        }
+
+        private static Color Recolor(Color color, ThemePalette previous)
+        {
+            if (color == previous.Background) return NasTheme.Background;
+            if (color == previous.Surface) return NasTheme.Surface;
+            if (color == previous.Border) return NasTheme.Border;
+            if (color == previous.Text) return NasTheme.Text;
+            if (color == previous.Muted) return NasTheme.Muted;
+            return color;
         }
 
         private static ShellButton CreateButton(string text, ShellGlyph glyph, bool primary, Action action)
@@ -162,8 +246,7 @@ namespace NasDesk
 
         private void SetConnectionState(string text, Color color)
         {
-            connectionBadge.Text = "●  " + text;
-            connectionBadge.ForeColor = color;
+            connectionBadge.SetStatus(text, color);
         }
 
         private static WebView2 CreateBrowser()
@@ -402,7 +485,7 @@ namespace NasDesk
             errorPanel.Visible = true;
             errorPanel.BringToFront();
             status.Text = "연결 확인 필요 · 주소 수정 / 다시 연결";
-            SetConnectionState("연결 확인", Color.FromArgb(244, 184, 96));
+            SetConnectionState("연결 확인", NasTheme.Warning);
         }
 
         private void NavigateHome()
@@ -525,6 +608,8 @@ namespace NasDesk
         {
             if (disposing)
             {
+                NasTheme.Changed -= OnThemeChanged;
+                themeMenu.Dispose();
                 if (!popup) connection.Dispose();
                 foreach (MainWindow child in children.ToArray()) child.Dispose();
                 if (tray != null)
