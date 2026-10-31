@@ -20,7 +20,6 @@ namespace NasDesk
                 dialog.Show();
                 ListBox list = Field<ListBox>(dialog, "historyList");
                 TextBox input = Field<TextBox>(dialog, "addressInput");
-                TextBox addName = Field<TextBox>(dialog, "addNameInput");
                 TextBox selectedName = Field<TextBox>(dialog, "selectedNameInput");
                 ConnectionTypePicker picker = Field<ConnectionTypePicker>(dialog, "typePicker");
                 ShellButton add = Field<ShellButton>(dialog, "addButton");
@@ -30,32 +29,33 @@ namespace NasDesk
                 Label status = Field<Label>(dialog, "statusLabel");
                 check(!File.Exists(path) && list.Items.Count == 0 && !remove.Enabled && !use.Enabled
                     && dialog.SelectedConnection == null && input.Text == current.Url
-                    && addName.Text == String.Empty && !rename.Enabled && !selectedName.Enabled,
+                    && !rename.Enabled && !selectedName.Enabled,
                     "Opening empty address history does not write or add the current NAS");
 
                 input.Text = "https://first-nas.test:8443/";
-                addName.Text = "집 NAS";
                 add.PerformClick();
                 check(store.Read().Count == 1 && list.Items.Count == 1 && list.SelectedIndex == 0
                     && dialog.SelectedConnection == null && current.Url == "https://current-nas.test/"
-                    && store.ReadEntries()[0].Name == "집 NAS" && selectedName.Text == "집 NAS"
-                    && list.Items[0].ToString().StartsWith("집 NAS · HTTPS 주소 · "),
-                    "Manual history addition stores a named NAS without changing the current connection");
-                addName.Text = String.Empty;
+                    && store.ReadEntries()[0].Name == String.Empty && selectedName.Text == String.Empty
+                    && list.Items[0].ToString().StartsWith("first-nas.test · HTTPS 주소 · "),
+                    "Manual history addition defaults to the host name without changing the current connection");
+                selectedName.Text = "집 NAS";
+                rename.PerformClick();
                 add.PerformClick();
                 check(store.Read().Count == 1 && list.Items.Count == 1 && list.SelectedIndex == 0
                     && store.ReadEntries()[0].Name == "집 NAS" && selectedName.Text == "집 NAS",
-                    "Adding an existing address with a blank optional name preserves its saved name");
+                    "Adding an existing address preserves the name saved through the selected NAS editor");
 
                 picker.Kind = ConnectionKind.SynologyQuickConnect;
                 input.Text = "team-nas";
-                addName.Text = "회사 NAS";
                 add.PerformClick();
                 check(store.Read().Count == 2 && list.Items.Count == 2 && list.SelectedIndex == 0
                     && list.Items[0].ToString().Contains("Synology QuickConnect")
                     && store.Read()[0].Kind == ConnectionKind.SynologyQuickConnect
-                    && list.Items[0].ToString().StartsWith("회사 NAS · ") && selectedName.Text == "회사 NAS",
-                    "The history list displays the NAS name, explicit QuickConnect type and normalized URL");
+                    && list.Items[0].ToString().StartsWith("team-nas.quickconnect.to · ") && selectedName.Text == String.Empty,
+                    "A new QuickConnect row displays its host name, explicit type and normalized URL");
+                selectedName.Text = "회사 NAS";
+                rename.PerformClick();
 
                 list.SelectedIndex = 1;
                 check(selectedName.Text == "집 NAS" && rename.Enabled && selectedName.Enabled,
@@ -65,7 +65,7 @@ namespace NasDesk
                 check(store.ReadEntries()[0].Name == "회사 NAS" && store.ReadEntries()[1].Name == "집 파일 서버"
                     && list.SelectedIndex == 1 && selectedName.Text == "집 파일 서버"
                     && list.Items[1].ToString().StartsWith("집 파일 서버 · ")
-                    && input.Text == "https://team-nas.quickconnect.to/" && addName.Text == "회사 NAS"
+                    && input.Text == "https://team-nas.quickconnect.to/"
                     && current.Url == "https://current-nas.test/" && dialog.SelectedConnection == null,
                     "Saving a NAS name trims it without reordering history, changing address drafts or navigating");
                 string beforeReopen = File.ReadAllText(path);
@@ -83,13 +83,7 @@ namespace NasDesk
                     && status.Text.Contains("HTTPS"),
                     "Invalid history input stays available for correction without changing saved rows");
 
-                input.Text = "https://name-validation.test/";
-                addName.Text = new String('n', 61);
                 string invalidNameRows = Rows(list);
-                add.PerformClick();
-                check(list.Items.Count == 2 && Rows(list) == invalidNameRows && addName.Text.Length == 61
-                    && store.Read().Count == 2 && status.Text.Contains("60자"),
-                    "An invalid new NAS name preserves its draft and saved rows");
                 selectedName.Text = new String('r', 61);
                 rename.PerformClick();
                 check(list.SelectedIndex == 1 && Rows(list) == invalidNameRows && selectedName.Text.Length == 61
@@ -98,14 +92,14 @@ namespace NasDesk
 
                 list.SelectedIndex = 1;
                 input.Text = "https://cannot-save-history.test/";
-                addName.Text = "추가 중인 NAS";
+                selectedName.Text = "기존 이름 편집 초안";
                 string rows = Rows(list);
                 string file = File.ReadAllText(path);
                 using (FileStream locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
                     add.PerformClick();
                 check(list.SelectedIndex == 1 && Rows(list) == rows && input.Text == "https://cannot-save-history.test/"
-                    && addName.Text == "추가 중인 NAS" && File.ReadAllText(path) == file && status.Text.Contains("저장하지 못"),
-                    "A history save failure preserves the address, name draft, selected row and visible list");
+                    && selectedName.Text == "기존 이름 편집 초안" && File.ReadAllText(path) == file && status.Text.Contains("저장하지 못"),
+                    "A history save failure preserves the address, selected-name draft, selected row and visible list");
 
                 selectedName.Text = "저장 실패 이름";
                 using (FileStream locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -172,11 +166,9 @@ namespace NasDesk
                 dialog.Show();
                 ListBox list = Field<ListBox>(dialog, "historyList");
                 TextBox input = Field<TextBox>(dialog, "addressInput");
-                TextBox newName = Field<TextBox>(dialog, "addNameInput");
                 TextBox selectedName = Field<TextBox>(dialog, "selectedNameInput");
                 Label status = Field<Label>(dialog, "statusLabel");
                 input.Text = "https://unsaved-draft.test/";
-                newName.Text = "추가할 이름 초안";
                 selectedName.Text = "기존 이름 편집 초안";
                 string rows = Rows(list);
                 int calls = 0;
@@ -189,7 +181,7 @@ namespace NasDesk
                 Field<ShellButton>(dialog, "useButton").PerformClick();
                 check(calls == 1 && dialog.Visible && !dialog.IsDisposed && dialog.DialogResult == DialogResult.None
                     && dialog.SelectedConnection == null && list.SelectedIndex == 0 && Rows(list) == rows
-                    && input.Text == "https://unsaved-draft.test/" && newName.Text == "추가할 이름 초안"
+                    && input.Text == "https://unsaved-draft.test/"
                     && selectedName.Text == "기존 이름 편집 초안" && status.Text == "연결 설정 저장이 거부되었습니다."
                     && File.ReadAllText(connectionPath) == connectionBefore && File.ReadAllText(path) == historyBefore,
                     "A rejected connection callback preserves the open dialog, drafts, selection and saved settings with its detailed error");

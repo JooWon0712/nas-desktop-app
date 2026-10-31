@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-이 문서는 **v0.14.0-preview.1의 보호 동작과 적용 범위**를 설명합니다. 기능 검사 통과는 독립 보안 감사·침투 테스트·보안 인증을 의미하지 않습니다. 앱의 보안은 Windows·WebView2 Runtime·접속하는 NAS와 인증서 신뢰 환경에도 의존합니다. 검사 범위는 [개발/검증](DEVELOPMENT.md)을 참고하세요.
+이 문서는 **v0.15.0-preview.1의 보호 동작과 적용 범위**를 설명합니다. 기능 검사 통과는 독립 보안 감사·침투 테스트·보안 인증을 의미하지 않습니다. 앱의 보안은 Windows·WebView2 Runtime·접속하는 NAS와 인증서 신뢰 환경에도 의존합니다. 검사 범위는 [개발/검증](DEVELOPMENT.md)을 참고하세요.
 
 ## HTTPS와 주소 이동 제한
 
@@ -84,7 +84,7 @@ DPAPI는 저장된 파일의 보호 수단이며, **같은 Windows 사용자 권
 
 ## 배포 파일과 무결성 확인
 
-현재 EXE는 **코드 서명되지 않은 프리뷰**입니다. [v0.14.0-preview.1 릴리스 첨부 파일](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.14.0-preview.1)의 ZIP과 `SHA256SUMS.txt`를 함께 내려받아 같은 폴더에 두고, 그 폴더에서 실행하세요.
+현재 EXE는 **코드 서명되지 않은 프리뷰**입니다. [v0.15.0-preview.1 릴리스 첨부 파일](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.15.0-preview.1)의 ZIP과 `SHA256SUMS.txt`를 함께 내려받아 같은 폴더에 두고, 그 폴더에서 실행하세요.
 
 ```powershell
 $expectedHash = ((Get-Content -LiteralPath .\SHA256SUMS.txt -Raw).Trim() -split '\s+')[0]

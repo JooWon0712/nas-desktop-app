@@ -71,7 +71,7 @@ namespace NasDesk
             InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
             {
                 Field<TextBox>(dialog, "addressInput").Text = "https://unsaved-modal.test/";
-                Field<TextBox>(dialog, "addNameInput").Text = "미저장 NAS";
+                Field<TextBox>(dialog, "selectedNameInput").Text = "미저장 NAS";
                 check(address.AddressText == original.Url && address.Input.ReadOnly && core.Source == source,
                     "Unsubmitted URL and name input inside the modal cannot change the main address or connection");
             });
@@ -124,16 +124,19 @@ namespace NasDesk
                 InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
                 {
                     Field<TextBox>(dialog, "addressInput").Text = added;
-                    Field<TextBox>(dialog, "addNameInput").Text = "새 NAS";
                     Field<ShellButton>(dialog, "addButton").PerformClick();
                     check(address.AddressText == alternate.Url && address.Input.ReadOnly && core.Source == alternate.Url
-                        && Field<ListBox>(dialog, "historyList").SelectedIndex == 0,
-                        "Adding a URL inside the modal selects its saved record without changing the connected NAS");
+                        && Field<ListBox>(dialog, "historyList").SelectedIndex == 0
+                        && store.ReadEntries()[0].Name == String.Empty
+                        && Field<ListBox>(dialog, "historyList").Items[0].ToString().StartsWith("nas-desk-alternate.test · "),
+                        "Adding a URL selects its host-named record without changing the connected NAS");
+                    Field<TextBox>(dialog, "selectedNameInput").Text = "새 NAS";
+                    Field<ShellButton>(dialog, "renameButton").PerformClick();
                     Field<ShellButton>(dialog, "useButton").PerformClick();
                 });
             }, added, "NAS Desk local fixture");
             check(address.AddressText == added && address.Input.ReadOnly && store.ReadEntries()[0].Name == "새 NAS",
-                "A new NAS can be entered, named, saved and connected entirely inside the address history modal");
+                "A new NAS can be added, renamed with the selected NAS editor and connected inside the address history modal");
 
             core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts, delegate
             {

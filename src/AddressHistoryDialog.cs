@@ -21,9 +21,6 @@ namespace NasDesk
         private readonly TextBox selectedNameInput;
         private readonly ShellButton renameButton;
         private readonly Label addHeading;
-        private readonly Label addHint;
-        private readonly HistoryFrame addNameFrame;
-        private readonly TextBox addNameInput;
         private readonly HistoryFrame inputFrame;
         private readonly ConnectionTypePicker typePicker;
         private readonly TextBox addressInput;
@@ -68,26 +65,21 @@ namespace NasDesk
             selectedNameFrame.Controls.Add(selectedNameInput);
             renameButton = new ShellButton { Text = "이름 저장", TabIndex = 2, AccessibleName = "선택한 NAS 이름 저장" };
             addHeading = new Label { AutoSize = false, Text = "새 주소 추가", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
-            addHint = new Label { AutoSize = false, Text = "새 NAS 이름 (선택)", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 8.5F) };
-            addNameFrame = new HistoryFrame { TabIndex = 3 };
-            addNameInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Malgun Gothic", 9F), MaxLength = 60, TabIndex = 0, AccessibleName = "새 NAS 이름 (선택)", AccessibleDescription = "예: 집 NAS / 회사 NAS" };
-            addNameFrame.Controls.Add(addNameInput);
-            inputFrame = new HistoryFrame { TabIndex = 4 };
+            inputFrame = new HistoryFrame { TabIndex = 3 };
             typePicker = new ConnectionTypePicker { TabIndex = 0 };
             addressInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 10F), TabIndex = 1, AccessibleName = "추가할 NAS 주소" };
             inputFrame.Controls.Add(typePicker);
             inputFrame.Controls.Add(addressInput);
             statusLabel = new Label { AutoSize = false, Text = "입력한 전체 주소를 이 PC에만 저장합니다.", Font = new Font("Malgun Gothic", 8.5F) };
-            addButton = new ShellButton { Text = "추가", Glyph = ShellGlyph.None, TabIndex = 6, AccessibleName = "NAS 주소 기록에 추가" };
-            removeButton = new ShellButton { Text = "삭제", TabIndex = 7, AccessibleName = "선택한 주소 기록 삭제" };
-            closeButton = new ShellButton { Text = "닫기", DialogResult = DialogResult.Cancel, TabIndex = 8 };
-            useButton = new ShellButton { Text = "선택 NAS 연결", Glyph = ShellGlyph.ArrowRight, Primary = true, TabIndex = 9, AccessibleName = "선택한 NAS에 연결" };
+            addButton = new ShellButton { Text = "추가", Glyph = ShellGlyph.None, TabIndex = 4, AccessibleName = "NAS 주소 기록에 추가" };
+            removeButton = new ShellButton { Text = "삭제", TabIndex = 5, AccessibleName = "선택한 주소 기록 삭제" };
+            closeButton = new ShellButton { Text = "닫기", DialogResult = DialogResult.Cancel, TabIndex = 6 };
+            useButton = new ShellButton { Text = "선택 NAS 연결", Glyph = ShellGlyph.ArrowRight, Primary = true, TabIndex = 7, AccessibleName = "선택한 NAS에 연결" };
             inputTips = new ToolTip();
-            inputTips.SetToolTip(addNameInput, "예: 집 NAS / 회사 NAS. 비워 두면 호스트명으로 표시합니다.");
             inputTips.SetToolTip(selectedNameInput, "이름을 비우고 저장하면 호스트명으로 표시합니다.");
             Controls.AddRange(new Control[] {
                 heading, subtitle, listHeading, countLabel, listFrame,
-                selectedNameLabel, selectedNameFrame, renameButton, addHeading, addHint, addNameFrame,
+                selectedNameLabel, selectedNameFrame, renameButton, addHeading,
                 inputFrame, addButton, statusLabel, removeButton, closeButton, useButton
             });
             addButton.Click += delegate { AddAddress(); };
@@ -101,7 +93,6 @@ namespace NasDesk
             };
             typePicker.KindChanged += delegate { ClearStatus(); };
             addressInput.TextChanged += delegate { if (statusIsError) ClearStatus(); };
-            addNameInput.TextChanged += delegate { if (statusIsError) ClearStatus(); };
             selectedNameInput.TextChanged += delegate { if (statusIsError) ClearStatus(); };
             AcceptButton = useButton;
             CancelButton = closeButton;
@@ -164,8 +155,6 @@ namespace NasDesk
 
         private void AddAddress()
         {
-            string name;
-            if (!TryReadName(addNameInput, out name)) return;
             ConnectionSettings candidate;
             if (!ConnectionSettings.TryCreate(addressInput.Text.Trim(), typePicker.Kind, out candidate))
             {
@@ -177,13 +166,11 @@ namespace NasDesk
             }
             try
             {
-                if (String.IsNullOrEmpty(name)) store.Add(candidate);
-                else store.Add(candidate, name);
+                store.Add(candidate);
                 IList<AddressHistoryEntry> entries = store.ReadEntries();
                 ReplaceRows(entries, candidate, 0);
                 addressInput.Text = candidate.Url;
-                addNameInput.Text = name;
-                SetStatus("주소를 저장하고 선택했습니다. ‘선택 NAS 연결’을 누르면 접속합니다.", false);
+                SetStatus("주소를 저장하고 선택했습니다. 위에서 이름을 지정하거나 ‘선택 NAS 연결’을 누르세요.", false);
             }
             catch (Exception) { SetStatus("주소를 저장하지 못했습니다. 파일 권한과 저장 공간을 확인해 주세요.", true); }
         }
@@ -294,15 +281,15 @@ namespace NasDesk
             Color text = highContrast ? SystemColors.WindowText : NasTheme.Text;
             Color muted = highContrast ? SystemColors.WindowText : NasTheme.Muted;
             BackColor = background;
-            heading.BackColor = subtitle.BackColor = listHeading.BackColor = countLabel.BackColor = selectedNameLabel.BackColor = addHeading.BackColor = addHint.BackColor = statusLabel.BackColor = background;
+            heading.BackColor = subtitle.BackColor = listHeading.BackColor = countLabel.BackColor = selectedNameLabel.BackColor = addHeading.BackColor = statusLabel.BackColor = background;
             heading.ForeColor = listHeading.ForeColor = selectedNameLabel.ForeColor = addHeading.ForeColor = text;
-            subtitle.ForeColor = countLabel.ForeColor = addHint.ForeColor = muted;
+            subtitle.ForeColor = countLabel.ForeColor = muted;
             statusLabel.ForeColor = highContrast ? SystemColors.WindowText : statusIsError ? NasTheme.Danger : NasTheme.Muted;
-            listFrame.BackColor = selectedNameFrame.BackColor = addNameFrame.BackColor = inputFrame.BackColor = historyList.BackColor = emptyLabel.BackColor = surface;
+            listFrame.BackColor = selectedNameFrame.BackColor = inputFrame.BackColor = historyList.BackColor = emptyLabel.BackColor = surface;
             historyList.ForeColor = text;
             emptyLabel.ForeColor = muted;
-            typePicker.BackColor = addressInput.BackColor = selectedNameInput.BackColor = addNameInput.BackColor = surface;
-            typePicker.ForeColor = addressInput.ForeColor = selectedNameInput.ForeColor = addNameInput.ForeColor = text;
+            typePicker.BackColor = addressInput.BackColor = selectedNameInput.BackColor = surface;
+            typePicker.ForeColor = addressInput.ForeColor = selectedNameInput.ForeColor = text;
             foreach (ShellButton button in new[] { addButton, renameButton, removeButton, closeButton, useButton }) { button.BackColor = surface; button.ForeColor = text; }
             NasTheme.RefreshWindowChrome(this);
             Invalidate(true);
@@ -325,16 +312,13 @@ namespace NasDesk
                 int footer = ClientSize.Height - pad - Px(40, scale);
                 statusLabel.Bounds = new Rectangle(pad, footer - Px(48, scale), width, Px(36, scale));
                 int inputTop = statusLabel.Top - Px(12, scale) - Px(40, scale);
-                addHeading.Bounds = new Rectangle(pad, inputTop - Px(38, scale), Px(130, scale), Px(30, scale));
-                addHint.Bounds = new Rectangle(pad + Px(140, scale), addHeading.Top, Px(126, scale), addHeading.Height);
-                addNameFrame.Bounds = new Rectangle(pad + Px(270, scale), addHeading.Top, Math.Max(1, width - Px(270, scale)), addHeading.Height);
+                addHeading.Bounds = new Rectangle(pad, inputTop - Px(38, scale), width, Px(30, scale));
                 int renameTop = addHeading.Top - Px(54, scale);
                 selectedNameLabel.Bounds = new Rectangle(pad, renameTop, Px(110, scale), Px(40, scale));
                 renameButton.Bounds = new Rectangle(ClientSize.Width - pad - Px(110, scale), renameTop, Px(110, scale), Px(40, scale));
                 selectedNameFrame.Bounds = new Rectangle(pad + Px(120, scale), renameTop,
                     Math.Max(1, renameButton.Left - gap - pad - Px(120, scale)), Px(40, scale));
                 LayoutNameInput(selectedNameInput, selectedNameFrame, scale);
-                LayoutNameInput(addNameInput, addNameFrame, scale);
                 int listTop = pad + Px(109, scale);
                 listFrame.Bounds = new Rectangle(pad, listTop, width, Math.Max(Px(90, scale), renameTop - Px(12, scale) - listTop));
                 listFrame.Padding = new Padding(Px(4, scale));
@@ -370,7 +354,7 @@ namespace NasDesk
 
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)
         {
-            if (keyData == Keys.Enter && (addressInput.ContainsFocus || addNameInput.ContainsFocus)) { AddAddress(); return true; }
+            if (keyData == Keys.Enter && addressInput.ContainsFocus) { AddAddress(); return true; }
             if (keyData == Keys.Enter && selectedNameInput.ContainsFocus) { RenameSelected(); return true; }
             if (keyData == Keys.Enter && historyList.ContainsFocus) { UseSelected(); return true; }
             if (keyData == Keys.Delete && historyList.ContainsFocus) { RemoveSelected(); return true; }

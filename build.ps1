@@ -37,7 +37,8 @@ $sdkFiles = @(
 function Assert-UnlinkedSdkPath([string]$Path) {
     $ancestor = [IO.Path]::GetFullPath($Path)
     while ($ancestor) {
-        if ((Test-Path -LiteralPath $ancestor) -and (((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        $ancestorItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction SilentlyContinue
+        if ($null -ne $ancestorItem -and (($ancestorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
             throw 'WebView2 SDK paths must not pass through linked files or directories.'
         }
         $ancestor = [IO.Path]::GetDirectoryName($ancestor)
@@ -57,71 +58,85 @@ function Test-SdkCache {
     return $complete
 }
 
-Assert-UnlinkedSdkPath $packageRoot
-if (-not (Test-SdkCache)) {
-    New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
-    $zip = Join-Path $cacheDirectory "microsoft.web.webview2.$version.zip"
-    Assert-UnlinkedSdkPath $zip
-    if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
-        $download = Join-Path $cacheDirectory ("webview2-download-" + [Guid]::NewGuid().ToString('N') + '.zip')
-        try {
-            Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $download
-            if ((Get-FileHash -LiteralPath $download -Algorithm SHA512).Hash -cne $packageSha512) {
-                throw 'Downloaded WebView2 package failed the pinned NuGet SHA-512 check.'
+. (Join-Path $PSScriptRoot 'tools\BuildArtifacts.ps1')
+$buildLock = Enter-NasDeskArtifactLock -ProjectRoot $PSScriptRoot -Name build
+$buildWorkspace = $null
+try {
+    $buildWorkspace = New-NasDeskWorkspace -ProjectRoot $PSScriptRoot -Kind build
+    Assert-UnlinkedSdkPath $packageRoot
+    if (-not (Test-SdkCache)) {
+        New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+        $zip = Join-Path $buildWorkspace.Path 'webview2.zip'
+        Assert-UnlinkedSdkPath $zip
+        if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            $download = Join-Path $buildWorkspace.Path 'webview2-download.zip'
+            try {
+                Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $download
+                if ((Get-FileHash -LiteralPath $download -Algorithm SHA512).Hash -cne $packageSha512) {
+                    throw 'Downloaded WebView2 package failed the pinned NuGet SHA-512 check.'
+                }
+                [IO.File]::Move($download, $zip)
             }
-            [IO.File]::Move($download, $zip)
+            finally { if (Test-Path -LiteralPath $download -PathType Leaf) { Remove-Item -LiteralPath $download -Force } }
         }
-        finally { if (Test-Path -LiteralPath $download -PathType Leaf) { Remove-Item -LiteralPath $download -Force } }
+        if ((Get-FileHash -LiteralPath $zip -Algorithm SHA512).Hash -cne $packageSha512) {
+            throw 'Cached WebView2 package failed the pinned NuGet SHA-512 check. Remove the package cache and rebuild.'
+        }
+        # Extract only verified files needed by this build; never overwrite unrelated cache paths.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+        try {
+            foreach ($file in $sdkFiles) {
+                $destination = Join-Path $packageRoot $file.Path
+                Assert-UnlinkedSdkPath $destination
+                $entry = $archive.GetEntry($file.Path.Replace('\', '/'))
+                if ($null -eq $entry) { throw "Verified WebView2 package is missing $($file.Path)." }
+                New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination, $true)
+            }
+        }
+        finally { $archive.Dispose() }
+        if (-not (Test-SdkCache)) { throw 'Verified WebView2 SDK extraction is incomplete.' }
     }
-    if ((Get-FileHash -LiteralPath $zip -Algorithm SHA512).Hash -cne $packageSha512) {
-        throw 'Cached WebView2 package failed the pinned NuGet SHA-512 check. Remove the package cache and rebuild.'
-    }
-    # Extract only verified files needed by this build; never overwrite unrelated cache paths.
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [IO.Compression.ZipFile]::OpenRead($zip)
-    try {
-        foreach ($file in $sdkFiles) {
-            $destination = Join-Path $packageRoot $file.Path
-            Assert-UnlinkedSdkPath $destination
-            $entry = $archive.GetEntry($file.Path.Replace('\', '/'))
-            if ($null -eq $entry) { throw "Verified WebView2 package is missing $($file.Path)." }
-            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination, $true)
+    $sdkMarker = Join-Path $packageRoot '.nasdesk-sdk-cache'
+    Assert-UnlinkedSdkPath $sdkMarker
+    [IO.File]::WriteAllText($sdkMarker, 'nas-desktop-app:sdk-cache:v1:' + $version)
+    Clear-NasDeskSdkCache -ProjectRoot $PSScriptRoot -Version $version
+    New-Item -ItemType Directory -Path $output -Force | Out-Null
+    $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    $iconTool = Join-Path $buildWorkspace.Path 'IconGenerator.exe'
+    $icon = Join-Path $buildWorkspace.Path 'app.ico'
+    & $compiler /nologo /target:exe "/out:$iconTool" /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll (Join-Path $PSScriptRoot 'src\Theme.cs') (Join-Path $PSScriptRoot 'tools\IconGenerator.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Icon tool compilation failed.' }
+    & $iconTool $icon
+    if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed.' }
+    $references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll','System.Security.dll')
+    $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'
+    $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'
+    $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',"/out:$(Join-Path $output 'NasDesktop.exe')", "/win32icon:$icon", "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')")
+    $arguments += $references | ForEach-Object { "/reference:$_" }
+    $arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*.cs' | ForEach-Object FullName
+    & $compiler @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
+    Copy-Item -LiteralPath (Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'),(Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'),(Join-Path $packageRoot 'runtimes\win-x64\native\WebView2Loader.dll') -Destination $output -Force
+    if ($IncludeLocalSettings) {
+        if (Test-Path -LiteralPath $localSettingsSource -PathType Leaf) {
+            Copy-Item -LiteralPath $localSettingsSource -Destination $localSettingsOutput -Force
         }
     }
-    finally { $archive.Dispose() }
-    if (-not (Test-SdkCache)) { throw 'Verified WebView2 SDK extraction is incomplete.' }
-}
-New-Item -ItemType Directory -Path $output -Force | Out-Null
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$iconTool = Join-Path $PSScriptRoot '.packages\IconGenerator.exe'
-$icon = Join-Path $PSScriptRoot '.packages\app.ico'
-& $compiler /nologo /target:exe "/out:$iconTool" /reference:System.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll (Join-Path $PSScriptRoot 'src\Theme.cs') (Join-Path $PSScriptRoot 'tools\IconGenerator.cs')
-if ($LASTEXITCODE -ne 0) { throw 'Icon tool compilation failed.' }
-& $iconTool $icon
-if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed.' }
-$references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll','System.Security.dll')
-$references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'
-$references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'
-$arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',"/out:$(Join-Path $output 'NasDesktop.exe')", "/win32icon:$icon", "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')")
-$arguments += $references | ForEach-Object { "/reference:$_" }
-$arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*.cs' | ForEach-Object FullName
-& $compiler @arguments
-if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
-Copy-Item -LiteralPath (Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'),(Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'),(Join-Path $packageRoot 'runtimes\win-x64\native\WebView2Loader.dll') -Destination $output -Force
-if ($IncludeLocalSettings) {
-    if (Test-Path -LiteralPath $localSettingsSource -PathType Leaf) {
-        Copy-Item -LiteralPath $localSettingsSource -Destination $localSettingsOutput -Force
+    elseif (Test-Path -LiteralPath $localSettingsOutput) {
+        # This is the generated output copy, never the developer's original settings.
+        if ([IO.Path]::GetFullPath($localSettingsOutput).Equals([IO.Path]::GetFullPath($localSettingsSource), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Refusing to remove the original local settings file.'
+        }
+        if (-not (Test-Path -LiteralPath $localSettingsOutput -PathType Leaf)) {
+            throw 'The public build output contains a directory named connection.local.json.'
+        }
+        Remove-Item -LiteralPath $localSettingsOutput -Force
     }
+    Write-Output "Built: $(Join-Path $output 'NasDesktop.exe')"
 }
-elseif (Test-Path -LiteralPath $localSettingsOutput) {
-    # This is the generated output copy, never the developer's original settings.
-    if ([IO.Path]::GetFullPath($localSettingsOutput).Equals([IO.Path]::GetFullPath($localSettingsSource), [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Refusing to remove the original local settings file.'
-    }
-    if (-not (Test-Path -LiteralPath $localSettingsOutput -PathType Leaf)) {
-        throw 'The public build output contains a directory named connection.local.json.'
-    }
-    Remove-Item -LiteralPath $localSettingsOutput -Force
+finally {
+    try { Remove-NasDeskWorkspace -Workspace $buildWorkspace }
+    finally { $buildLock.Dispose() }
 }
-Write-Output "Built: $(Join-Path $output 'NasDesktop.exe')"

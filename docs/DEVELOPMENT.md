@@ -6,7 +6,7 @@
 
 구현은 **C# 5 / WinForms / .NET Framework 4.8**, WebView2 SDK **1.0.4314.35**를 사용합니다. Windows x64의 PowerShell에서 실행합니다. 앱 실행과 웹 화면을 포함한 기능 검사에는 Microsoft Edge WebView2 Evergreen Runtime이 필요합니다.
 
-[build.ps1](../build.ps1)은 Windows의 .NET Framework C# 컴파일러를 사용하고, 처음에는 NuGet에서 SDK를 받아 `.packages/`에 보관합니다. 다운로드는 [공식 NuGet 카탈로그](https://api.nuget.org/v3/catalog0/data/2026.10.23.06.50.10/microsoft.web.webview2.1.0.4314.35.json)의 SHA-512 고정값으로 확인하고, 사용하는 DLL 3개도 매 빌드마다 고정 해시와 대조합니다. SDK 버전을 바꿀 때는 패키지와 DLL 해시를 함께 갱신해야 합니다. 공개 ZIP에는 WebView2 Runtime을 포함하지 않습니다.
+[build.ps1](../build.ps1)은 Windows의 .NET Framework C# 컴파일러를 사용하고, 처음에는 NuGet에서 SDK를 받습니다. `.packages/`에는 현재 고정한 SDK의 DLL 3개만 캐시합니다. 다운로드는 [공식 NuGet 카탈로그](https://api.nuget.org/v3/catalog0/data/2026.10.23.06.50.10/microsoft.web.webview2.1.0.4314.35.json)의 SHA-512 고정값으로 확인하고, 사용하는 DLL 3개도 매 빌드마다 고정 해시와 대조합니다. SDK 버전을 바꿀 때는 패키지와 DLL 해시를 함께 갱신해야 합니다. 공개 ZIP에는 WebView2 Runtime을 포함하지 않습니다.
 
 ## 빌드와 패키징
 
@@ -38,17 +38,26 @@ WebView2Loader.dll
 
 `connection.local.json`, 주소 기록 파일, `.packages/`, `dist/`, `test-output/`은 Git에서 제외합니다. 로컬 데이터와 공유 시 주의할 내용은 [보안 문서](SECURITY.md)를 참고하세요.
 
+### 생성 파일 자동 정리
+
+[BuildArtifacts.ps1](../tools/BuildArtifacts.ps1)은 빌드·기능 검사·패키징 검사의 임시 작업을 `test-output/.generated/` 아래에 격리합니다. 소유 표식과 사용 중 잠금이 있는 작업 폴더만 관리하며, 성공·실패 모두 종료 시 정리합니다. 비정상 종료로 남은 폴더는 다음 실행에서 회수하고, 사용 중이거나 잠긴 폴더는 건너뛴 뒤 다음 실행에서 다시 시도합니다.
+
+NuGet 원본·임시 압축 파일·아이콘·검사용 실행 파일과 프로필은 보관하지 않습니다. SDK 교체 시에도 관리 표식이 있는 이전 SDK 캐시만 정리합니다. 최신 검사 결과인 `test-output/results.txt`, `stdout.txt`, `stderr.txt`는 남깁니다.
+
+기본 빌드는 `dist/NasDesktop/`, 기본 패키지는 같은 ZIP 경로를 갱신합니다. 사용자가 지정한 출력 폴더·릴리스 ZIP, 표식 없는 기존 `test-output` 파일, 개인 설정·수동 복구 백업과 `%LOCALAPPDATA%/NasDesk/`의 로그인 데이터는 자동 삭제하지 않습니다.
+
 ## 로컬 검증
 
 ```powershell
-# 격리된 기능 검사와 패키징 검사
+# 격리된 기능 검사, 패키징·정리 검사
 .\test.ps1
 .\tools\test-packaging.ps1
+.\tools\test-cleanup.ps1
 ```
 
-`0.14.0` 로컬 환경에서 **기능 332개·패키징 13개 검사**를 통과했습니다. 프리뷰 배포 버전은 **v0.14.0-preview.1**입니다.
+현재 작업본에서 **기능 331개·패키징 18개·자동 정리 21개 검사**를 통과했습니다. 기능 검사 종료 후 임시 작업 폴더가 남지 않는 것도 확인했습니다. 공개 프리뷰 배포 버전은 **v0.15.0-preview.1**입니다.
 
-[기능 검사](../test.ps1)는 매 실행마다 고유한 `test-output/r-<8자리 16진수>/`에 격리된 프로필과 검사 데이터를 두고 가상 HTTPS 페이지를 사용합니다. 테스트 EXE의 경로는 `test-output/NasDesk.Tests.exe`로 고정하며, 실제 사용자 설정·프로필이나 NAS 로그인을 사용하지 않습니다.
+[기능 검사](../test.ps1)는 `test-output/.generated/`의 관리되는 임시 작업 폴더에 테스트 EXE·프로필·검사 데이터를 두고 가상 HTTPS 페이지를 사용합니다. 종료 후 임시 파일을 정리하고 최신 결과 파일만 남기며, 실제 사용자 설정·프로필이나 NAS 로그인을 사용하지 않습니다.
 
 - 주소 읽기 전용·모달 입력/연결·중복 모달 차단·잘못된 주소 거부·저장 실패 시 원본 유지
 - 이름·주소 기록 저장/삭제, 쿠키·웹 저장소, 팝업, 최소화와 창 종료, 파일 다운로드
@@ -59,6 +68,8 @@ WebView2Loader.dll
 QNAP·ASUSTOR·TrueNAS 관련 검사는 제조사별 경로·포트를 흉내 낸 **합성 화면** 기준입니다. 별도 읽기 전용 확인에서는 한 Synology NAS의 QuickConnect 자동 전환과 DSM 로그인 화면 표시를 확인했으며 로그인은 수행하지 않았습니다. 실제 장비의 2FA·업로드·다중 파일 전송·모든 패키지와 모든 QuickConnect 지역/릴레이 조합을 검증한 것은 아닙니다. Windows 종료 분기 검사도 실제 재부팅 검사는 아닙니다.
 
 [패키징 검사](../tools/test-packaging.ps1)는 임시 junction을 만들고, 기능 검사는 격리된 다운로드 파일 쓰기와 웹 프로세스 충돌을 재현하므로 제한된 실행 환경에서는 권한 문제가 날 수 있습니다.
+
+[정리 검사](../tools/test-cleanup.ps1)는 격리된 작업 폴더에서 생성 파일 회수와 사용 중 폴더·관리 대상 밖의 파일 보존을 검증합니다.
 
 0.14 보안 작업에서는 격리된 fixture로 SDK DLL·패키지 변조 거부, 잘못된 다운로드 정리, 정상 캐시 복구, ZIP 내용·중복 항목·체크섬 확인을 추가 검증했습니다. 첫 SDK 다운로드부터 검증·추출·빌드하는 경로와 기존 체크섬을 교체하는 반복 패키징도 확인했습니다.
 
