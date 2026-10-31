@@ -13,6 +13,7 @@ namespace NasDesk
         private static readonly List<string> results = new List<string>();
         private static string output;
         private static string fixture;
+        private static string uiSettingsPath;
         private static int exitCode = 1;
 
         [STAThread]
@@ -20,10 +21,13 @@ namespace NasDesk
         {
             output = args[0]; fixture = args[1];
             Directory.CreateDirectory(output);
+            uiSettingsPath = Path.Combine(output, "ui-connection.json");
+            ConnectionSettings initialSettings = new ConnectionSettings { Url = "https://nas-desk.test/" };
+            initialSettings.Save(uiSettingsPath);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             UnitTests();
-            using (MainWindow window = new MainWindow(new ConnectionSettings { Url = "https://nas-desk.test/" }, Path.Combine(output, "profile"), true))
+            using (MainWindow window = new MainWindow(initialSettings, Path.Combine(output, "profile"), true, uiSettingsPath))
             {
                 window.Shown += async delegate
                 {
@@ -113,8 +117,75 @@ namespace NasDesk
             core.Navigate("https://blocked.invalid/");
             await WaitFor(() => blocked, 5000, "External navigation blocked before request");
             Check(blocked, "Unconfigured origin blocked");
+            await RunAddressTests(window, core);
             window.RequestExit();
             Check(window.IsDisposed && popup.IsDisposed && !window.TrayVisible, "Explicit exit disposes windows and tray");
+        }
+
+        private static async Task RunAddressTests(MainWindow window, CoreWebView2 core)
+        {
+            const string originalUrl = "https://nas-desk.test/";
+            AddressBar address = window.Address;
+            System.Drawing.Size originalSize = window.Size;
+            window.Size = window.MinimumSize;
+            window.PerformLayout();
+            Check(address.Input.Parent.Bottom <= address.ClientSize.Height
+                && address.EditSwitch.Bottom <= address.ClientSize.Height
+                && address.ConnectButton.Bottom <= address.ClientSize.Height
+                && address.ConnectButton.Right <= address.ClientSize.Width
+                && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
+                && address.Width >= address.MinimumSize.Width,
+                "Address input, switch and connection button fit at minimum window size");
+            window.Size = originalSize;
+            window.PerformLayout();
+            string originalSettings = File.ReadAllText(uiSettingsPath);
+            string originalPage = core.Source;
+            Check(!address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
+                "Address starts read-only with connection action disabled");
+
+            address.IsEditing = true;
+            Check(!address.Input.ReadOnly && address.ConnectButton.Enabled, "Address edit ON enables input and connection");
+            address.AddressText = "https://uncommitted.test/";
+            address.IsEditing = false;
+            Check(address.Input.ReadOnly && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
+                "Address edit OFF discards draft without saving or navigating");
+
+            address.IsEditing = true;
+            address.AddressText = "https://cancelled.test/";
+            Message escape = Message.Create(address.Input.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
+            bool escapeHandled = address.PreProcessMessage(ref escape);
+            Check(escapeHandled && !address.IsEditing && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings,
+                "Local Escape command cancels address edit without global key input");
+
+            address.IsEditing = true;
+            address.AddressText = "http://nas-desk-alternate.test/index.html";
+            address.ConnectButton.PerformClick();
+            Check(address.IsEditing && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
+                "HTTP address submission preserves saved address and current page");
+            address.AddressText = "https://user:secret@nas-desk-alternate.test/index.html";
+            address.ConnectButton.PerformClick();
+            Check(address.IsEditing && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
+                "Credentials in address submission are rejected without changing settings");
+
+            const string alternateUrl = "https://nas-desk-alternate.test/index.html";
+            core.SetVirtualHostNameToFolderMapping("nas-desk-alternate.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
+            bool alternateLoaded = false;
+            EventHandler<CoreWebView2NavigationCompletedEventArgs> navigated = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                if (e.IsSuccess && core.Source == alternateUrl) alternateLoaded = true;
+            };
+            core.NavigationCompleted += navigated;
+            try
+            {
+                address.AddressText = alternateUrl;
+                address.ConnectButton.PerformClick();
+                await WaitFor(() => alternateLoaded, 10000, "Updated NAS address loads its new HTTPS origin");
+                Check(ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
+                    && !address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled
+                    && core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture",
+                    "Valid address submission saves isolated settings, locks editor and loads new HTTPS origin");
+            }
+            finally { core.NavigationCompleted -= navigated; }
         }
     }
 }

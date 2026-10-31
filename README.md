@@ -15,7 +15,9 @@ Windows 10/11 x64, .NET Framework 4.8 이상, Microsoft Edge WebView2 Evergreen 
 3. 알림 영역의 Synology NAS Desktop 아이콘을 더블클릭하거나 우클릭 → **NAS 창 열기**로 복원합니다. Windows가 아이콘을 숨긴 경우 `^`를 눌러 확인하세요.
 4. 앱을 끝내려면 트레이 우클릭 → **완전 종료**를 누릅니다. Windows 로그오프·종료 때도 앱 종료를 허용합니다.
 
-접속 주소는 상단의 **접속 설정**에서 바꿀 수 있습니다. 같은 주소의 새 창은 별도 앱 창으로 열고 로그인 저장 공간을 공유합니다. 상단의 **다운로드**는 WebView2 기본 다운로드 목록을 엽니다. **브라우저**는 기본 브라우저에서 NAS 홈 주소를 엽니다.
+접속 주소는 상단의 주소 입력란에 표시됩니다. 기본 상태에서는 선택·복사만 할 수 있습니다. **주소 수정** 스위치를 켜고 주소를 입력한 다음 **연결** 또는 Enter를 누르면 저장·접속하고 수정 모드가 꺼집니다. 스위치를 끄거나 Esc를 누르면 저장하지 않은 수정은 취소하고 기존 주소를 복원합니다. 별도의 숨기기 버튼 없이 X로 트레이에 숨깁니다.
+
+같은 주소의 새 창은 별도 앱 창으로 열고 로그인 저장 공간을 공유합니다. 상단의 **다운로드**는 WebView2 기본 다운로드 목록을 엽니다. **브라우저**는 **Windows에 설정된 기본 브라우저**에서 저장된 NAS 홈 주소를 엽니다. 해당 브라우저의 로그인 상태는 앱과 별도입니다.
 
 앱은 시작 프로그램이나 Windows 서비스로 등록되지 않습니다. PC를 다시 켠 후에는 직접 실행하세요. 이미 실행 중인 앱을 다시 실행하면 기존 창을 엽니다.
 
@@ -42,6 +44,6 @@ PowerShell에서 `./build.ps1`을 실행합니다. Windows 기본 .NET Framework
 
 `./test.ps1`은 보이지 않는 로컬 WebView 창과 가상 HTTPS 페이지로 검사합니다. 실제 NAS나 계정에 접근하지 않습니다. 결과는 `test-output/results.txt`에 남습니다.
 
-검사한 항목은 실제 WebView2 초기화, X를 통한 숨김, 트레이 유지·창 복원, 숨김 중 JavaScript 실행, 쿠키·웹 저장소 유지, 팝업의 세션 공유·숨김·복원·웹에서 닫기, 출처 제한, 명시적 종료 시 창·트레이 정리입니다. Windows 종료 처리는 종료 이유별 분기 검사이며 실제 로그오프나 재부팅은 하지 않았습니다. 실제 DSM 로그인·파일 전송·패키지별 호환성과 트레이 아이콘을 직접 누르는 화면 검증은 별도로 확인해야 합니다.
+검사한 항목은 실제 WebView2 초기화, X를 통한 숨김, 트레이 유지·창 복원, 숨김 중 JavaScript 실행, 쿠키·웹 저장소 유지, 팝업의 세션 공유·숨김·복원·웹에서 닫기, 출처 제한, 명시적 종료 시 창·트레이 정리, 주소 편집·취소·검증·저장 후 새 주소 접속, 최소 창 크기의 주소 입력줄 배치입니다. Windows 종료 처리는 종료 이유별 분기 검사이며 실제 로그오프나 재부팅은 하지 않았습니다. 실제 DSM 로그인·파일 전송·패키지별 호환성과 트레이 아이콘을 직접 누르는 화면 검증은 별도로 확인해야 합니다.
 
 구현 근거: [Microsoft WebView2 WinForms](https://learn.microsoft.com/en-us/microsoft-edge/webview2/get-started/winforms), [NotifyIcon](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.notifyicon), [WebView2 사용자 데이터 폴더](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/user-data-folder), [WebView2 보안](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security).

@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'build.ps1')
+$appOutput = Join-Path $PSScriptRoot 'test-output\app'
+& (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $appOutput
 $packageRoot = Join-Path $PSScriptRoot '.packages\webview2-1.0.4314.35'
 $output = Join-Path $PSScriptRoot 'test-output'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
@@ -11,7 +12,7 @@ $arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter
 $arguments += Join-Path $PSScriptRoot 'tests\Tests.cs'
 & $compiler @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
-Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'dist\SynologyNasDesktop') -Filter '*.dll' | Copy-Item -Destination $output -Force
+Get-ChildItem -LiteralPath $appOutput -Filter '*.dll' | Copy-Item -Destination $output -Force
 $taskArguments = '"{0}" "{1}"' -f $output,(Join-Path $PSScriptRoot 'tests\fixtures')
 $process = Start-Process -FilePath (Join-Path $output 'NasDesk.Tests.exe') -ArgumentList $taskArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $output 'stdout.txt') -RedirectStandardError (Join-Path $output 'stderr.txt')
 if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id; throw 'Tests timed out.' }

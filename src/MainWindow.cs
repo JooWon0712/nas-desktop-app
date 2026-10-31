@@ -21,10 +21,12 @@ namespace NasDesk
         private readonly NotifyIcon tray;
         private readonly ToolStripStatusLabel status;
         private readonly Label connectionBadge;
-        private readonly Label connectionHost;
+        internal readonly AddressBar Address;
+        private readonly string settingsPath;
         private readonly Panel errorPanel;
         private readonly Label errorText;
         private readonly Icon appIcon;
+        private readonly ToolTip toolTips = new ToolTip();
         private bool exitRequested;
         private bool balloonShown;
         private CoreWebView2Environment environment;
@@ -34,9 +36,12 @@ namespace NasDesk
         internal bool TrayVisible { get { return tray != null && tray.Visible; } }
 
         internal MainWindow(ConnectionSettings settings, string profilePath, bool testMode)
-            : this(settings, profilePath, testMode, false) { }
+            : this(settings, profilePath, testMode, false, Program.SettingsPath) { }
 
-        private MainWindow(ConnectionSettings settings, string profilePath, bool testMode, bool popup)
+        internal MainWindow(ConnectionSettings settings, string profilePath, bool testMode, string settingsPath)
+            : this(settings, profilePath, testMode, false, settingsPath) { }
+
+        private MainWindow(ConnectionSettings settings, string profilePath, bool testMode, bool popup, string settingsPath)
         {
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
@@ -45,6 +50,7 @@ namespace NasDesk
             this.profilePath = profilePath;
             this.testMode = testMode;
             this.popup = popup;
+            this.settingsPath = settingsPath;
             Text = Program.AppName;
             Font = new Font("Malgun Gothic", 9F);
             Size = new Size(1320, 900);
@@ -56,8 +62,9 @@ namespace NasDesk
             BackColor = NasTheme.Background;
 
             Browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(24, 27, 32) };
-            Panel top = new Panel { Dock = DockStyle.Top, Height = 144, Padding = new Padding(20, 0, 20, 10), BackColor = NasTheme.Background };
-            TableLayoutPanel header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 80, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            Panel top = new Panel { Dock = DockStyle.Top, Height = 134, Padding = new Padding(20, 0, 20, 10), BackColor = NasTheme.Background };
+            TableLayoutPanel header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 74, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
             Panel brand = new Panel { Dock = DockStyle.Fill };
@@ -67,24 +74,35 @@ namespace NasDesk
             brand.Controls.AddRange(new Control[] { logo, brandTitle, brandSubtitle });
             Panel connection = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 24, 0, 21) };
             connectionBadge = new Label { Text = "●  연결 준비", AutoSize = false, Dock = DockStyle.Right, Width = 115, TextAlign = ContentAlignment.MiddleCenter, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
-            connectionHost = new Label { Text = new Uri(settings.Url).Authority, Dock = DockStyle.Fill, AutoEllipsis = true, ForeColor = NasTheme.Muted, TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 16, 0), Font = new Font("Segoe UI", 9F) };
-            connection.Controls.Add(connectionHost);
             connection.Controls.Add(connectionBadge);
             header.Controls.Add(brand, 0, 0);
             header.Controls.Add(connection, 1, 0);
-            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 44, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            FlowLayoutPanel left = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
-            FlowLayoutPanel right = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, Margin = Padding.Empty };
-            AddButton(left, "NAS 홈", ShellGlyph.Home, true, delegate { NavigateHome(); });
-            AddButton(left, "새로 고침", ShellGlyph.Refresh, false, delegate { ReloadPage(); });
-            AddButton(left, "다운로드", ShellGlyph.Download, false, delegate { if (Ready) Browser.CoreWebView2.OpenDefaultDownloadDialog(); });
-            if (!popup) AddButton(right, "숨기기", ShellGlyph.Tray, false, delegate { HideToTray(); });
-            if (!popup) AddButton(right, "접속 설정", ShellGlyph.Settings, false, delegate { ChangeAddress(); });
-            AddButton(right, "브라우저", ShellGlyph.External, false, delegate { OpenExternal(settings.Url, false); });
-            actions.Controls.Add(left, 0, 0);
-            actions.Controls.Add(right, 1, 0);
+            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 44, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 47));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 47));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
+            ShellButton home = CreateButton("NAS 홈", ShellGlyph.Home, false, delegate { NavigateHome(); });
+            home.Compact = true;
+            ShellButton refresh = CreateButton("새로 고침", ShellGlyph.Refresh, false, delegate { ReloadPage(); });
+            refresh.Compact = true;
+            Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 1, 9, 1) };
+            Address.SetAddress(settings.Url);
+            Address.ConnectRequested += delegate { ApplyAddress(); };
+            if (popup) Address.EditSwitch.Enabled = false;
+            ShellButton downloads = CreateButton("다운로드", ShellGlyph.Download, false, delegate { if (Ready) Browser.CoreWebView2.OpenDefaultDownloadDialog(); });
+            ShellButton external = CreateButton("브라우저", ShellGlyph.External, false, delegate { OpenExternal(settings.Url, false); });
+            external.AccessibleDescription = "Windows에 설정된 기본 브라우저에서 NAS 홈 주소를 엽니다.";
+            toolTips.SetToolTip(home, "NAS 홈");
+            toolTips.SetToolTip(refresh, "새로 고침");
+            toolTips.SetToolTip(external, "Windows 기본 브라우저에서 열기");
+            actions.Controls.Add(home, 0, 0);
+            actions.Controls.Add(refresh, 1, 0);
+            actions.Controls.Add(Address, 2, 0);
+            actions.Controls.Add(downloads, 3, 0);
+            actions.Controls.Add(external, 4, 0);
             top.Controls.Add(actions);
             top.Controls.Add(header);
             StatusStrip footer = new StatusStrip { BackColor = NasTheme.Background, ForeColor = NasTheme.Muted, SizingGrip = false, Padding = new Padding(20, 4, 20, 4) };
@@ -129,11 +147,11 @@ namespace NasDesk
             ResumeLayout(true);
         }
 
-        private static void AddButton(FlowLayoutPanel strip, string text, ShellGlyph glyph, bool primary, Action action)
+        private static ShellButton CreateButton(string text, ShellGlyph glyph, bool primary, Action action)
         {
-            ShellButton button = new ShellButton { Text = text, Glyph = glyph, Primary = primary, Size = new Size(108, 38), Margin = new Padding(0, 2, 7, 0) };
+            ShellButton button = new ShellButton { Text = text, AccessibleName = text, Glyph = glyph, Primary = primary, Dock = DockStyle.Fill, Margin = new Padding(0, 2, 7, 2) };
             button.Click += delegate { action(); };
-            strip.Controls.Add(button);
+            return button;
         }
 
         private void SetConnectionState(string text, Color color)
@@ -161,7 +179,7 @@ namespace NasDesk
                     if (!ConnectionSettings.IsInternal(e.Uri, settings.Url))
                     {
                         e.Cancel = true;
-                        status.Text = "다른 주소로의 이동이 차단됐습니다. 필요하면 ‘브라우저로 열기’를 사용하세요.";
+                        status.Text = "다른 주소로의 이동이 차단됐습니다. 필요하면 ‘브라우저’를 사용하세요.";
                         return;
                     }
                     errorPanel.Visible = false;
@@ -222,7 +240,7 @@ namespace NasDesk
             MainWindow child = null;
             try
             {
-                child = new MainWindow(settings, profilePath, testMode, true);
+                child = new MainWindow(settings, profilePath, testMode, true, settingsPath);
                 // Force HWND creation without displaying an uninitialized window.
                 IntPtr handle = child.Handle;
                 await child.InitializeAsync(environment);
@@ -252,7 +270,7 @@ namespace NasDesk
             errorText.Text = message;
             errorPanel.Visible = true;
             errorPanel.BringToFront();
-            status.Text = "연결 확인 필요 · 접속 주소 / 다시 연결";
+            status.Text = "연결 확인 필요 · 주소 수정 / 다시 연결";
             SetConnectionState("연결 확인", Color.FromArgb(244, 184, 96));
         }
 
@@ -270,19 +288,25 @@ namespace NasDesk
             else Browser.Reload();
         }
 
-        private void ChangeAddress()
+        private void ApplyAddress()
         {
-            string address = AddressDialog.Ask(this, settings.Url);
-            if (address == null) return;
+            string value = Address.AddressText.Trim();
+            if (!ConnectionSettings.IsValid(value))
+            {
+                status.Text = "https://로 시작하는 NAS 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
+                Address.Input.Focus();
+                return;
+            }
+            string address = new Uri(value).AbsoluteUri;
             try
             {
-                new ConnectionSettings { Url = address }.Save(Program.SettingsPath);
-                foreach (MainWindow child in children.ToArray()) child.Close();
+                new ConnectionSettings { Url = address }.Save(settingsPath);
+                foreach (MainWindow child in children.ToArray()) child.RequestExit();
                 settings.Url = address;
-                connectionHost.Text = new Uri(settings.Url).Authority;
+                Address.SetAddress(address);
                 NavigateHome();
             }
-            catch (Exception error) { MessageBox.Show(this, "주소를 저장하지 못했습니다.\n" + error.Message, Program.AppName); }
+            catch (Exception error) { status.Text = "주소를 저장하지 못했습니다: " + error.Message; }
         }
 
         private void OpenExternal(string value, bool confirm)
@@ -369,6 +393,7 @@ namespace NasDesk
                     tray.Dispose();
                 }
                 Browser.Dispose();
+                toolTips.Dispose();
                 appIcon.Dispose();
             }
             base.Dispose(disposing);

@@ -1,4 +1,4 @@
-param()
+param([string]$OutputDirectory = 'dist\SynologyNasDesktop')
 $ErrorActionPreference = 'Stop'
 $version = '1.0.4314.35'
 $packageRoot = Join-Path $PSScriptRoot ".packages\webview2-$version"
@@ -8,7 +8,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'lib\net462\Microsoft.W
     Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $zip
     Expand-Archive -LiteralPath $zip -DestinationPath $packageRoot -Force
 }
-$output = Join-Path $PSScriptRoot 'dist\SynologyNasDesktop'
+$output = if ([IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $PSScriptRoot $OutputDirectory }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $iconTool = Join-Path $PSScriptRoot '.packages\IconGenerator.exe'
