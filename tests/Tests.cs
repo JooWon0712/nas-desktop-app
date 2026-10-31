@@ -134,8 +134,11 @@ namespace NasDesk
                 && address.ConnectButton.Bottom <= address.ClientSize.Height
                 && address.ConnectButton.Right <= address.ClientSize.Width
                 && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
-                && address.Width >= address.MinimumSize.Width,
+                && address.Bottom <= address.Parent.ClientSize.Height
+                && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width,
                 "Address input, switch and connection button fit at minimum window size");
+            Check(Math.Abs(address.Input.Top - (address.Input.Parent.ClientSize.Height - address.Input.Height - address.Input.Top)) <= 1,
+                "Address text stays vertically centered at the application DPI");
             window.Size = originalSize;
             window.PerformLayout();
             string originalSettings = File.ReadAllText(uiSettingsPath);

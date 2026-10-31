@@ -32,7 +32,8 @@ namespace NasDesk
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
             Height = 42;
-            MinimumSize = new Size(300, 38);
+            // The form supplies the minimum window width. A nested MinimumSize is
+            // scaled twice by .NET Framework at high DPI and can exceed its row.
             BackColor = NasTheme.Background;
             Font = new Font("Malgun Gothic", 9F);
             TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
@@ -40,20 +41,26 @@ namespace NasDesk
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
-            inputFrame = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Surface, Margin = new Padding(0, 1, 8, 1), Padding = new Padding(12, 0, 12, 0) };
+            inputFrame = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Margin = new Padding(0, 0, 8, 0), Padding = new Padding(12, 0, 12, 0) };
             inputFrame.Paint += delegate(object sender, PaintEventArgs e)
             {
                 if (inputFrame.Width < 2 || inputFrame.Height < 2) return;
+                e.Graphics.Clear(NasTheme.Background);
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                using (GraphicsPath border = NasTheme.RoundRect(new RectangleF(0.5F, 0.5F, inputFrame.Width - 1F, inputFrame.Height - 1F), 7))
-                using (Pen pen = new Pen(IsEditing ? NasTheme.Accent : NasTheme.Border)) e.Graphics.DrawPath(pen, border);
+                using (GraphicsPath border = NasTheme.RoundRect(new RectangleF(0.5F, 0.5F, inputFrame.Width - 1F, inputFrame.Height - 1F), 7 * e.Graphics.DpiX / 96F))
+                using (SolidBrush fill = new SolidBrush(NasTheme.Surface))
+                using (Pen pen = new Pen(IsEditing ? NasTheme.Accent : NasTheme.Border))
+                {
+                    e.Graphics.FillPath(fill, border);
+                    e.Graphics.DrawPath(pen, border);
+                }
             };
             Input = new TextBox { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 0 };
             inputFrame.Controls.Add(Input);
             inputFrame.Resize += delegate { LayoutInput(); };
             Input.FontChanged += delegate { LayoutInput(); };
-            EditSwitch = new AddressEditSwitch { Dock = DockStyle.Fill, Margin = new Padding(0, 1, 8, 1), Text = "주소 수정", AccessibleName = "주소 수정", TabIndex = 1 };
-            ConnectButton = new ShellButton { Dock = DockStyle.Fill, Margin = new Padding(0, 1, 0, 1), Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
+            EditSwitch = new AddressEditSwitch { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0), Text = "주소 수정", AccessibleName = "주소 수정", TabIndex = 1 };
+            ConnectButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
             EditSwitch.CheckedChanged += delegate { ApplyEditing(); };
             ConnectButton.Click += delegate { RequestConnection(); };
             layout.Controls.Add(inputFrame, 0, 0);
@@ -67,7 +74,14 @@ namespace NasDesk
         private void LayoutInput()
         {
             if (Input == null) return;
-            Input.SetBounds(inputFrame.Padding.Left, Math.Max(0, (inputFrame.ClientSize.Height - Input.PreferredHeight) / 2), Math.Max(1, inputFrame.ClientSize.Width - inputFrame.Padding.Horizontal), Input.PreferredHeight);
+            Input.Size = new Size(Math.Max(1, inputFrame.ClientSize.Width - inputFrame.Padding.Horizontal), Input.PreferredHeight);
+            Input.Location = new Point(inputFrame.Padding.Left, Math.Max(0, (inputFrame.ClientSize.Height - Input.Height) / 2));
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            LayoutInput();
         }
 
         private void ApplyEditing()

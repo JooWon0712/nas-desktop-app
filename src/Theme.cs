@@ -172,6 +172,7 @@ namespace NasDesk
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            e.Graphics.Clear(Parent == null ? NasTheme.Background : Parent.BackColor);
             float scale = e.Graphics.DpiX / 96F;
             RectangleF bounds = new RectangleF(0.5F, 0.5F, Math.Max(1, ClientSize.Width - 1), Math.Max(1, ClientSize.Height - 1));
             Color fill = primary ? NasTheme.Accent : pressed ? NasTheme.Pressed : hover ? NasTheme.Hover : NasTheme.Surface;

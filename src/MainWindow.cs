@@ -62,8 +62,8 @@ namespace NasDesk
             BackColor = NasTheme.Background;
 
             Browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(24, 27, 32) };
-            Panel top = new Panel { Dock = DockStyle.Top, Height = 134, Padding = new Padding(20, 0, 20, 10), BackColor = NasTheme.Background };
-            TableLayoutPanel header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 74, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            Panel top = new Panel { Dock = DockStyle.Top, Height = 148, Padding = new Padding(20, 8, 20, 14), BackColor = NasTheme.Background };
+            TableLayoutPanel header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 72, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
@@ -77,23 +77,24 @@ namespace NasDesk
             connection.Controls.Add(connectionBadge);
             header.Controls.Add(brand, 0, 0);
             header.Controls.Add(connection, 1, 0);
-            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 44, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 48, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 47));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 47));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
             ShellButton home = CreateButton("NAS 홈", ShellGlyph.Home, false, delegate { NavigateHome(); });
             home.Compact = true;
             ShellButton refresh = CreateButton("새로 고침", ShellGlyph.Refresh, false, delegate { ReloadPage(); });
             refresh.Compact = true;
-            Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 1, 9, 1) };
+            Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 12, 4) };
             Address.SetAddress(settings.Url);
             Address.ConnectRequested += delegate { ApplyAddress(); };
             if (popup) Address.EditSwitch.Enabled = false;
             ShellButton downloads = CreateButton("다운로드", ShellGlyph.Download, false, delegate { if (Ready) Browser.CoreWebView2.OpenDefaultDownloadDialog(); });
             ShellButton external = CreateButton("브라우저", ShellGlyph.External, false, delegate { OpenExternal(settings.Url, false); });
+            external.Margin = new Padding(0, 4, 0, 4);
             external.AccessibleDescription = "Windows에 설정된 기본 브라우저에서 NAS 홈 주소를 엽니다.";
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
@@ -149,7 +150,7 @@ namespace NasDesk
 
         private static ShellButton CreateButton(string text, ShellGlyph glyph, bool primary, Action action)
         {
-            ShellButton button = new ShellButton { Text = text, AccessibleName = text, Glyph = glyph, Primary = primary, Dock = DockStyle.Fill, Margin = new Padding(0, 2, 7, 2) };
+            ShellButton button = new ShellButton { Text = text, AccessibleName = text, Glyph = glyph, Primary = primary, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 8, 4) };
             button.Click += delegate { action(); };
             return button;
         }
