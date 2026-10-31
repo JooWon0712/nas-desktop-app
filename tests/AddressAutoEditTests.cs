@@ -22,7 +22,7 @@ namespace NasDesk
 
             address.SetAddress(original.Url, original.Kind);
             check(IsLocked(address, original) && !address.Input.CanUndo,
-                "A saved address hides its input, type and connection controls and clears old undo history");
+                "A saved address keeps its URL and type visible and read-only while clearing old undo history");
 
             address.LockButton.PerformClick();
             check(address.IsEditing && address.Input.Visible && !address.Input.ReadOnly && address.Input.Focused
@@ -36,19 +36,19 @@ namespace NasDesk
             check(Command(address, Keys.Escape) && IsLocked(address, original)
                 && File.ReadAllText(settingsPath) == originalFile && core.Source == originalPage
                 && Snapshot(history) == originalHistory,
-                "Escape restores the committed address and type and hides the editor without changing history");
+                "Escape restores the visible committed address and type without changing history");
 
             address.LockButton.PerformClick();
             address.AddressText = "https://cancel-button-fixture.test/";
             address.Kind = ConnectionKind.SynologyQuickConnect;
             address.LockButton.PerformClick();
             check(IsLocked(address, original) && File.ReadAllText(settingsPath) == originalFile
-                && !address.Input.CanUndo && !address.Input.ContainsFocus && core.Source == originalPage,
-                "The cancel button discards both draft fields, clears undo and moves focus out of the hidden input");
+                && !address.Input.CanUndo && core.Source == originalPage,
+                "The cancel button discards both draft fields and clears undo while keeping the saved address visible");
 
             check(Command(window, Keys.Control | Keys.L) && address.IsEditing && address.Input.Visible
                 && address.Input.Focused && address.Input.SelectionLength == address.Input.TextLength,
-                "Ctrl+L opens and focuses the collapsed address editor");
+                "Ctrl+L explicitly enables and focuses the visible address editor");
             const string keyboardDraft = "https://unsaved-keyboard-fixture.test/";
             address.AddressText = keyboardDraft;
             address.Kind = ConnectionKind.SynologyQuickConnect;
@@ -87,6 +87,9 @@ namespace NasDesk
                 "Invalid history candidates cannot open a draft, save settings or navigate");
 
             const string enterUrl = "https://nas-desk-alternate.test/index.html?address-editor=enter";
+            ConnectionSettings namedEnter;
+            ConnectionSettings.TryCreate(enterUrl, ConnectionKind.DirectHttps, out namedEnter);
+            history.Add(namedEnter, "Enter fixture NAS");
             window.OpenAddressEditor();
             address.AddressText = enterUrl;
             address.Kind = ConnectionKind.DirectHttps;
@@ -95,8 +98,9 @@ namespace NasDesk
             ConnectionSettings entered = ConnectionSettings.Read(settingsPath);
             check(enterHandled && entered.Url == enterUrl && entered.Kind == ConnectionKind.DirectHttps
                 && IsLocked(address, entered) && !address.Input.CanUndo
-                && history.Read().Any(item => item.Url == enterUrl && item.Kind == ConnectionKind.DirectHttps),
-                "A valid Enter submission saves and records the address, then hides and clears the editor");
+                && history.ReadEntries().Any(item => item.Url == enterUrl && item.Kind == ConnectionKind.DirectHttps
+                    && item.Name == "Enter fixture NAS"),
+                "A valid Enter submission saves the visible locked address and preserves its stored NAS name");
 
             string committedFile = File.ReadAllText(settingsPath);
             string committedHistory = Snapshot(history);
@@ -145,13 +149,13 @@ namespace NasDesk
                 BrowserCommand(popup, Keys.Control | Keys.L);
                 bool accepted = popup.UseHistoryAddress(recalled);
                 check(!accepted && !popup.Address.EditingEnabled && !popup.Address.IsEditing
-                    && popup.Address.Input.ReadOnly && !popup.Address.Input.Visible && !popup.Address.TypePicker.Visible
+                    && popup.Address.Input.ReadOnly && popup.Address.Input.Visible && popup.Address.TypePicker.Visible
                     && !popup.Address.TypePicker.Enabled && !popup.Address.LockButton.Visible && !popup.Address.LockButton.Enabled
                     && !popup.Address.HistoryButton.Visible && !popup.Address.HistoryButton.Enabled
                     && !popup.Address.ConnectButton.Visible && !popup.Address.ConnectButton.Enabled
                     && popup.Address.AddressText == popupAddress && File.ReadAllText(settingsPath) == committedFile
                     && core.Source == enterUrl,
-                    "NAS popups cannot open the editor or history through buttons, Ctrl+L or stored address selection");
+                    "NAS popups display a read-only address but cannot edit or select history through buttons or Ctrl+L");
             }
             finally
             {
@@ -165,12 +169,12 @@ namespace NasDesk
             check(IsLocked(address, original) && ConnectionSettings.Read(settingsPath).Url == original.Url
                 && ConnectionSettings.Read(settingsPath).Kind == original.Kind
                 && history.Read().Any(item => item.Url == original.Url && item.Kind == original.Kind),
-                "The connection button saves and records the original test connection and hides the editor");
+                "The connection button saves and records the original test connection and leaves its locked address visible");
         }
 
         private static bool IsLocked(AddressBar address, ConnectionSettings expected)
         {
-            return !address.IsEditing && address.Input.ReadOnly && !address.Input.Visible && !address.TypePicker.Visible
+            return !address.IsEditing && address.Input.ReadOnly && address.Input.Visible && address.TypePicker.Visible
                 && !address.TypePicker.Enabled && !address.ConnectButton.Visible && !address.ConnectButton.Enabled
                 && !address.LockButton.Editing && address.LockButton.Visible && address.LockButton.Enabled
                 && address.HistoryButton.Visible && address.HistoryButton.Enabled
@@ -179,7 +183,7 @@ namespace NasDesk
 
         private static string Snapshot(AddressHistoryStore history)
         {
-            return String.Join("\n", history.Read().Select(item => item.Type + "\t" + item.Url));
+            return String.Join("\n", history.ReadEntries().Select(item => item.Type + "\t" + item.Url + "\t" + item.Name));
         }
 
         private static bool Command(Control control, Keys key)

@@ -61,15 +61,15 @@ namespace NasDesk
             emptyLabel = new Label { Dock = DockStyle.Fill, Text = "저장된 주소가 없습니다.\n아래에서 주소를 추가할 수 있습니다.", TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Malgun Gothic", 10F) };
             listFrame.Controls.Add(historyList);
             listFrame.Controls.Add(emptyLabel);
-            selectedNameLabel = new Label { AutoSize = false, Text = "선택한 이름", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
+            selectedNameLabel = new Label { AutoSize = false, Text = "기존 NAS 이름", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
             selectedNameFrame = new HistoryFrame { TabIndex = 1 };
-            selectedNameInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Malgun Gothic", 9F), MaxLength = 60, TabIndex = 0, AccessibleName = "선택한 NAS 이름", AccessibleDescription = "이름을 비우고 저장하면 호스트명으로 표시합니다." };
+            selectedNameInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Malgun Gothic", 9F), MaxLength = 60, TabIndex = 0, AccessibleName = "기록에서 선택한 기존 NAS 이름", AccessibleDescription = "이름을 비우고 저장하면 호스트명으로 표시합니다." };
             selectedNameFrame.Controls.Add(selectedNameInput);
             renameButton = new ShellButton { Text = "이름 저장", TabIndex = 2, AccessibleName = "선택한 NAS 이름 저장" };
             addHeading = new Label { AutoSize = false, Text = "새 주소 추가", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
-            addHint = new Label { AutoSize = false, Text = "이름 (선택)", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 8.5F) };
+            addHint = new Label { AutoSize = false, Text = "새 NAS 이름 (선택)", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Malgun Gothic", 8.5F) };
             addNameFrame = new HistoryFrame { TabIndex = 3 };
-            addNameInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Malgun Gothic", 9F), MaxLength = 60, TabIndex = 0, AccessibleName = "추가할 NAS 이름 (선택)", AccessibleDescription = "예: 집 NAS / 회사 NAS" };
+            addNameInput = new TextBox { BorderStyle = BorderStyle.None, Font = new Font("Malgun Gothic", 9F), MaxLength = 60, TabIndex = 0, AccessibleName = "새 NAS 이름 (선택)", AccessibleDescription = "예: 집 NAS / 회사 NAS" };
             addNameFrame.Controls.Add(addNameInput);
             inputFrame = new HistoryFrame { TabIndex = 4 };
             typePicker = new ConnectionTypePicker { TabIndex = 0 };
@@ -306,13 +306,13 @@ namespace NasDesk
                 statusLabel.Bounds = new Rectangle(pad, footer - Px(48, scale), width, Px(36, scale));
                 int inputTop = statusLabel.Top - Px(12, scale) - Px(40, scale);
                 addHeading.Bounds = new Rectangle(pad, inputTop - Px(38, scale), Px(130, scale), Px(30, scale));
-                addHint.Bounds = new Rectangle(pad + Px(140, scale), addHeading.Top, Px(80, scale), addHeading.Height);
-                addNameFrame.Bounds = new Rectangle(pad + Px(224, scale), addHeading.Top, Math.Max(1, width - Px(224, scale)), addHeading.Height);
+                addHint.Bounds = new Rectangle(pad + Px(140, scale), addHeading.Top, Px(126, scale), addHeading.Height);
+                addNameFrame.Bounds = new Rectangle(pad + Px(270, scale), addHeading.Top, Math.Max(1, width - Px(270, scale)), addHeading.Height);
                 int renameTop = addHeading.Top - Px(54, scale);
-                selectedNameLabel.Bounds = new Rectangle(pad, renameTop, Px(82, scale), Px(40, scale));
+                selectedNameLabel.Bounds = new Rectangle(pad, renameTop, Px(110, scale), Px(40, scale));
                 renameButton.Bounds = new Rectangle(ClientSize.Width - pad - Px(110, scale), renameTop, Px(110, scale), Px(40, scale));
-                selectedNameFrame.Bounds = new Rectangle(pad + Px(92, scale), renameTop,
-                    Math.Max(1, renameButton.Left - gap - pad - Px(92, scale)), Px(40, scale));
+                selectedNameFrame.Bounds = new Rectangle(pad + Px(120, scale), renameTop,
+                    Math.Max(1, renameButton.Left - gap - pad - Px(120, scale)), Px(40, scale));
                 LayoutNameInput(selectedNameInput, selectedNameFrame, scale);
                 LayoutNameInput(addNameInput, addNameFrame, scale);
                 int listTop = pad + Px(109, scale);

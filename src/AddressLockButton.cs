@@ -44,7 +44,7 @@ namespace NasDesk
             AccessibleName = editing ? "NAS 주소 편집 취소" : "NAS 주소 변경";
             AccessibleDescription = editing
                 ? "NAS 주소를 편집하고 있습니다. 클릭하면 변경을 취소하고 주소를 잠급니다."
-                : "주소 입력줄이 숨겨져 있습니다. 클릭하면 주소를 편집합니다.";
+                : "저장한 주소를 표시하고 있습니다. 클릭하면 주소를 직접 편집합니다.";
             Invalidate();
             if (IsHandleCreated) AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }

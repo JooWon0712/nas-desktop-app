@@ -65,7 +65,6 @@ namespace NasDesk
             ConnectionFailureInfoTests.Run(Check);
             AddressHistoryStoreTests.Run(output, Check);
             AddressHistoryDialogTests.Run(output, Check);
-            AddressHistoryPopupTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -138,7 +137,7 @@ namespace NasDesk
             await BrowserScrollbarTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
             await AddressAutoEditTests.RunAsync(window, core, uiSettingsPath, Check);
-            await AddressSuggestionsBrowserTests.RunAsync(window, core, uiSettingsPath, Check);
+            await AddressModalBrowserTests.RunAsync(window, core, uiSettingsPath, Check);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
@@ -275,17 +274,21 @@ namespace NasDesk
             const string originalUrl = "https://nas-desk.test/";
             AddressBar address = window.Address;
             AddressHistoryStore history = new AddressHistoryStore(uiSettingsPath + ".history.json");
-            Func<string> historySnapshot = () => String.Join("\n", history.Read().Select(item => item.Type + "\t" + item.Url));
+            Func<string> historySnapshot = () => String.Join("\n", history.ReadEntries().Select(item => item.Type + "\t" + item.Url + "\t" + item.Name));
             System.Drawing.Size originalSize = window.Size;
             window.Size = window.MinimumSize;
             window.PerformLayout();
-            Check(!address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+            Check(address.Input.Visible && address.TypePicker.Visible && address.Input.ReadOnly
+                && !address.TypePicker.Enabled && !address.ConnectButton.Visible
+                && address.Input.Parent.Right < address.LockButton.Left
+                && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
+                && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width
                 && address.LockButton.Visible && address.HistoryButton.Visible
                 && address.LockButton.Left >= 0 && address.LockButton.Bottom <= address.ClientSize.Height
                 && address.LockButton.Right < address.HistoryButton.Left
                 && address.HistoryButton.Right == address.ClientSize.Width
                 && address.HistoryButton.Bottom <= address.ClientSize.Height,
-                "Collapsed address actions fit and align right at minimum window size");
+                "The always-visible locked address and right-aligned actions fit at minimum window size");
             address.LockButton.PerformClick();
             window.PerformLayout();
             Check(address.Input.Parent.Bottom <= address.ClientSize.Height
@@ -309,22 +312,22 @@ namespace NasDesk
             string originalPage = core.Source;
             string originalHistory = historySnapshot();
             Check(!address.IsEditing && address.Input.ReadOnly && !address.TypePicker.Enabled
-                && !address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+                && address.Input.Visible && address.TypePicker.Visible && !address.ConnectButton.Visible
                 && address.LockButton.Visible && address.HistoryButton.Visible
                 && address.Kind == ConnectionKind.DirectHttps && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
-                "Saved connection hides the address editor while keeping change and history actions available");
+                "Saved connection keeps the address visible and read-only with change and history actions available");
 
             address.IsEditing = true;
             Check(address.Input.Visible && !address.Input.ReadOnly && address.TypePicker.Visible && address.TypePicker.Enabled
                 && address.ConnectButton.Visible && address.ConnectButton.Enabled,
-                "Opening the address editor reveals input, connection type and connection action");
+                "Explicit editing enables the visible address and type and reveals the connection action");
             address.AddressText = "https://uncommitted.test/";
             address.Kind = ConnectionKind.SynologyQuickConnect;
             address.IsEditing = false;
-            Check(address.Input.ReadOnly && !address.Input.Visible && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
+            Check(address.Input.ReadOnly && address.Input.Visible && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
                 && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
                 && historySnapshot() == originalHistory,
-                "Closing the editor discards draft address and type without saving, recording or navigating");
+                "Cancelling editing restores the visible address and type without saving, recording or navigating");
 
             address.IsEditing = true;
             address.AddressText = "https://cancelled.test/";
@@ -332,7 +335,7 @@ namespace NasDesk
             Message escape = Message.Create(address.Input.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
             bool escapeHandled = address.PreProcessMessage(ref escape);
             Check(escapeHandled && !address.IsEditing && address.Kind == ConnectionKind.DirectHttps
-                && !address.Input.Visible && !address.ConnectButton.Visible
+                && address.Input.Visible && address.TypePicker.Visible && !address.ConnectButton.Visible
                 && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings
                 && core.Source == originalPage && historySnapshot() == originalHistory,
                 "Local Escape command cancels both address and connection type");
@@ -365,10 +368,10 @@ namespace NasDesk
                 Check(ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
                     && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
                     && !address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled
-                    && !address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+                    && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled && !address.ConnectButton.Visible
                     && history.Read().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps)
                     && core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture",
-                    "Valid address submission saves isolated settings and history, hides the editor and loads the new HTTPS origin");
+                    "Valid address submission saves isolated settings and history, locks the visible address and loads the new HTTPS origin");
             }
             finally { core.NavigationCompleted -= navigated; }
 
@@ -380,7 +383,7 @@ namespace NasDesk
             address.ConnectButton.PerformClick();
             await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Explicit QuickConnect type fixture");
             Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
-                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing && !address.Input.Visible
+                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing && address.Input.Visible
                 && history.Read().Any(item => item.Url == quickConnectUrl && item.Kind == ConnectionKind.SynologyQuickConnect),
                 "Connection editor applies and saves an explicitly selected QuickConnect type");
             address.IsEditing = true;
