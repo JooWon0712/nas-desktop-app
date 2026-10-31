@@ -92,15 +92,15 @@ namespace NasDesk
                 });
 
                 const string recovery = "https://failure-recovery.test/index.html";
-                core.SetVirtualHostNameToFolderMapping("failure-recovery.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
-                window.ApplyConnection(new ConnectionSettings { Url = recovery, Type = "https" });
-                await WaitFor(() => core.Source == recovery && core.DocumentTitle == "NAS Desk local fixture"
-                    && !window.IsFailureVisible, "Connection failure recovery through the address editor");
+                core = await BrowserFixtureNavigation.RunAsync(window, fixture, new[] { "failure-recovery.test" },
+                    delegate { window.ApplyConnection(new ConnectionSettings { Url = recovery, Type = "https" }); },
+                    recovery, "NAS Desk local fixture");
+                await WaitFor(() => !window.IsFailureVisible, "Connection failure recovery through address selection");
                 check(window.Browser.Visible && !window.FailureView.Visible && window.Ready
-                    && Object.ReferenceEquals(originalBrowser, window.Browser)
+                    && originalBrowser.IsDisposed && !Object.ReferenceEquals(originalBrowser, window.Browser)
                     && Object.ReferenceEquals(core, window.Browser.CoreWebView2)
                     && window.Address.Input.ReadOnly && ConnectionSettings.Read(settingsPath).Url == recovery,
-                    "A valid replacement address restores the NAS document and the same live WebView after failure");
+                    "A replacement NAS restores its document in a new isolated WebView after connection failure");
 
                 string recoveryHtml = File.ReadAllText(Path.Combine(fixture, "index.html"));
                 EventHandler<CoreWebView2WebResourceRequestedEventArgs> respond = delegate(object sender, CoreWebView2WebResourceRequestedEventArgs e)

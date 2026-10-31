@@ -63,8 +63,11 @@ namespace NasDesk
             AppearanceSettingsTests.Run(output, Check);
             ThemeModeTests.Run(Check);
             ConnectionFailureInfoTests.Run(Check);
+            BrowserProfileIdentityTests.Run(Check);
+            WebContentPolicyTests.Run(output, Check);
             AddressHistoryStoreTests.Run(output, Check);
             AddressHistoryDialogTests.Run(output, Check);
+            TrayIsolationTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -97,7 +100,9 @@ namespace NasDesk
             await ConnectionSessionTests.RunAsync(Check);
             await WaitFor(() => window.Ready || window.InitializationError != null, 20000, "WebView2 initialization");
             if (window.InitializationError != null) throw window.InitializationError;
-            Check(window.Ready && window.TrayVisible, "WebView2 and notification icon initialized");
+            Check(window.Ready && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
+                && TrayIsolationTests.HasNoNativeIcon(window),
+                "WebView2 and test tray behavior initialize without registering an OS notification icon");
             CoreWebView2 core = window.Browser.CoreWebView2;
             core.SetVirtualHostNameToFolderMapping("nas-desk.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
             core.Navigate("https://nas-desk.test/index.html");
@@ -109,18 +114,26 @@ namespace NasDesk
             await WaitFor(() => Application.OpenForms.Count >= 2, 10000, "Same-profile popup");
             MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
             await WaitFor(() => popup.Ready, 10000, "Popup document");
+            Check(!popup.ActualTrayRegistered && !popup.TrayVisible && !popup.TrayAvailable
+                && TrayIsolationTests.HasNoNativeIcon(popup),
+                "NAS test popups never register an OS notification icon or provide independent tray behavior");
             Check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "Popup shares NAS session");
             Check(!popup.Address.HistoryEnabled && popup.Address.Input.ReadOnly && popup.Address.Input.Visible
                 && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled,
                 "NAS popups retain a visible read-only address without connection selection controls");
             int before = Int32.Parse(await core.ExecuteScriptAsync("window.ticks"));
             window.Close();
-            Check(!window.Visible && !window.IsDisposed && window.TrayVisible, "Real Close hides without disposing WebView2");
+            Check(!window.Visible && !window.IsDisposed && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
+                && TrayIsolationTests.HasNoNativeIcon(window),
+                "Close preserves tray behavior and the live WebView without registering an OS icon");
             Check(!popup.Visible && !popup.IsDisposed, "Popup also hides with primary window");
             await Task.Delay(2500);
             Check(Int32.Parse(await core.ExecuteScriptAsync("window.ticks")) > before, "Web scripts continue while hidden");
             window.RestoreFromTray();
-            Check(window.Visible && popup.Visible && Object.ReferenceEquals(core, window.Browser.CoreWebView2), "Restore retains primary and popup WebView2 instances");
+            Check(window.Visible && popup.Visible && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
+                && TrayIsolationTests.HasNoNativeIcon(window) && TrayIsolationTests.HasNoNativeIcon(popup)
+                && Object.ReferenceEquals(core, window.Browser.CoreWebView2),
+                "Restore retains primary and popup WebViews without an OS notification icon");
             Check((await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')")) == "\"persisted\"", "Web storage retained after hide/restore");
             await popup.Browser.CoreWebView2.ExecuteScriptAsync("window.close()");
             await WaitFor(() => popup.IsDisposed, 5000, "window.close closes popup");
@@ -134,13 +147,19 @@ namespace NasDesk
             await GenericNasBrowserTests.RunAsync(output, fixture, Check);
             await ConnectionFailureBrowserTests.RunAsync(output, fixture, Check);
             await BrowserScrollbarTests.RunAsync(output, fixture, Check);
+            await BrowserProfileIsolationTests.RunAsync(output, Check);
+            await WebContentPolicyBrowserTests.RunAsync(output, Check);
             await RunAddressTests(window, core);
+            core = window.Browser.CoreWebView2;
             await AddressReadOnlyTests.RunAsync(window, core, uiSettingsPath, Check);
-            await AddressModalBrowserTests.RunAsync(window, core, uiSettingsPath, Check);
+            await AddressModalBrowserTests.RunAsync(window, core, uiSettingsPath, fixture, Check);
+            core = window.Browser.CoreWebView2;
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
-            Check(window.IsDisposed && popup.IsDisposed && !window.TrayVisible, "Explicit exit disposes windows and tray");
+            Check(window.IsDisposed && popup.IsDisposed && !window.ActualTrayRegistered && !window.TrayVisible && !window.TrayAvailable
+                && TrayIsolationTests.HasNoNativeIcon(window),
+                "Explicit exit disposes windows and ends test tray behavior without registering an OS icon");
         }
 
         private static async Task RunThemeTests(MainWindow window, CoreWebView2 core)
@@ -317,37 +336,31 @@ namespace NasDesk
             ConnectionSettings alternate;
             ConnectionSettings.TryCreate(alternateUrl, ConnectionKind.DirectHttps, out alternate);
             history.Add(alternate, "Selected fixture NAS");
-            bool alternateLoaded = false;
-            EventHandler<CoreWebView2NavigationCompletedEventArgs> navigated = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
-            {
-                if (e.IsSuccess && core.Source == alternateUrl) alternateLoaded = true;
-            };
-            core.NavigationCompleted += navigated;
-            try
-            {
-                bool applied = window.ApplyConnection(alternate);
-                await WaitFor(() => alternateLoaded && core.DocumentTitle == "NAS Desk local fixture", 10000, "Selected NAS address loads its HTTPS origin");
-                Check(applied && ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
-                    && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
-                    && address.Input.ReadOnly && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled
-                    && history.ReadEntries().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps
-                        && item.Name == "Selected fixture NAS") && core.Source == alternateUrl,
-                    "An explicit valid connection saves settings, preserves its NAS name and updates the read-only address");
-            }
-            finally { core.NavigationCompleted -= navigated; }
+            string[] fixtureHosts = { "nas-desk.test", "nas-desk-alternate.test", "ui-type-fixture.quickconnect.to" };
+            bool applied = false;
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts,
+                delegate { applied = window.ApplyConnection(alternate); }, alternateUrl, "NAS Desk local fixture");
+            Check(applied && ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
+                && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
+                && address.Input.ReadOnly && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled
+                && history.ReadEntries().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps
+                    && item.Name == "Selected fixture NAS") && core.Source == alternateUrl,
+                "An explicit valid connection saves settings, preserves its NAS name and updates the read-only address");
 
             const string quickConnectUrl = "https://ui-type-fixture.quickconnect.to/index.html";
             core.SetVirtualHostNameToFolderMapping("ui-type-fixture.quickconnect.to", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
             ConnectionSettings quickConnect;
             ConnectionSettings.TryCreate(quickConnectUrl, ConnectionKind.SynologyQuickConnect, out quickConnect);
-            bool quickConnectApplied = window.ApplyConnection(quickConnect);
-            await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Selected QuickConnect type fixture");
+            bool quickConnectApplied = false;
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts,
+                delegate { quickConnectApplied = window.ApplyConnection(quickConnect); }, quickConnectUrl, "NAS Desk local fixture");
             Check(quickConnectApplied && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
                 && address.Kind == ConnectionKind.SynologyQuickConnect && address.Input.ReadOnly && address.Input.Visible
                 && history.Read().Any(item => item.Url == quickConnectUrl && item.Kind == ConnectionKind.SynologyQuickConnect),
                 "A selected QuickConnect connection persists its explicit type in the read-only address bar");
-            bool directApplied = window.ApplyConnection(alternate);
-            await WaitFor(() => core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Return to direct HTTPS fixture");
+            bool directApplied = false;
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts,
+                delegate { directApplied = window.ApplyConnection(alternate); }, alternateUrl, "NAS Desk local fixture");
             Check(directApplied && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
                 && address.Kind == ConnectionKind.DirectHttps && address.Input.ReadOnly && !address.TypePicker.Enabled
                 && history.ReadEntries()[0].Name == "Selected fixture NAS",

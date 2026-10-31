@@ -54,6 +54,19 @@ namespace NasDesk
                 && !ExplicitAccepts("file:///tmp/test", ConnectionKind.DirectHttps)
                 && !ExplicitAccepts("nas", (ConnectionKind)999),
                 "Explicit direct mode rejects HTTP, credentials, unsafe characters, unsupported schemes and invalid modes");
+
+            bool sensitiveDetected = true;
+            foreach (string value in new[] {
+                "https://nas.test/?access_token=fixture-secret", "https://nas.test/?%74oken=fixture-secret",
+                "https://nas.test/?_sid=fixture-secret", "https://nas.test/?API-Key=fixture-secret",
+                "https://nas.test/#id_token=fixture-secret", "https://nas.test/#/signin?code=fixture-secret",
+                "https://nas.test/?SynoToken=fixture-secret", "https://nas.test/?password=fixture-secret" })
+                sensitiveDetected &= ConnectionAddress.ContainsSensitiveToken(value);
+            check(sensitiveDetected, "Known token, session and password keys in URL queries or fragments suppress automatic MRU duplication");
+            check(!ConnectionAddress.ContainsSensitiveToken("https://nas.test/ui/?page=files&serverID=demo#/signin")
+                && !ConnectionAddress.ContainsSensitiveToken("https://nas.test/?note=token&code=")
+                && !ConnectionAddress.ContainsSensitiveToken(null),
+                "Ordinary NAS routes and nonsecret query values remain eligible for automatic address history");
         }
 
         private static bool Parses(string value, string expectedUrl, string expectedId, string expectedDomain)

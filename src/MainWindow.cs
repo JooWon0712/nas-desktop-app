@@ -14,11 +14,21 @@ namespace NasDesk
     {
         private readonly ConnectionSettings settings;
         private readonly string profilePath;
+        private readonly string securityPath;
+        private string browserProfileName;
+        private int browserGeneration;
+        private int privacyGeneration;
+        private bool clearingLoginData;
+        private bool securityDialogOpen;
+        private bool allowExternalContent;
+        private bool quickConnectBootstrap;
+        private int blockedRequests;
         private readonly bool testMode;
         private readonly bool popup;
         private readonly List<MainWindow> children = new List<MainWindow>();
         private readonly List<MainWindow> hiddenChildren = new List<MainWindow>();
         private readonly NotifyIcon tray;
+        private readonly ContextMenuStrip trayMenu;
         private readonly ToolStripStatusLabel status;
         private readonly ConnectionStatusBadge connectionBadge;
         private readonly ContextMenuStrip themeMenu;
@@ -53,7 +63,12 @@ namespace NasDesk
         internal WebView2 Browser { get; private set; }
         internal bool Ready { get; private set; }
         internal Exception InitializationError { get; private set; }
-        internal bool TrayVisible { get { return tray != null && tray.Visible; } }
+        internal bool ActualTrayRegistered { get { return tray != null && tray.Visible; } }
+        internal bool TrayVisible { get { return ActualTrayRegistered; } }
+        internal bool TrayAvailable { get { return !popup && !IsDisposed && !exitRequested && (testMode || ActualTrayRegistered); } }
+        internal string BrowserProfileName { get { return browserProfileName; } }
+        internal bool AllowExternalContent { get { return allowExternalContent; } }
+        internal int BlockedRequests { get { return blockedRequests; } }
         internal bool IsFailureVisible { get { return failureShown; } }
         internal ConnectionFailureView FailureView { get { return errorPanel; } }
 
@@ -71,11 +86,14 @@ namespace NasDesk
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            this.settings = settings;
+            this.settings = new ConnectionSettings { Url = settings.Url, Type = settings.Type };
             this.profilePath = profilePath;
             this.testMode = testMode;
             this.popup = popup;
             this.settingsPath = settingsPath;
+            securityPath = testMode ? settingsPath + ".security.json" : Program.SecurityPath;
+            browserProfileName = BrowserProfileIdentity.ForConnection(settings);
+            allowExternalContent = WebContentPolicy.ReadExternalContentAllowed(securityPath, browserProfileName);
             historyStore = new AddressHistoryStore(testMode ? settingsPath + ".history.json" : Program.HistoryPath);
             appliedPalette = NasTheme.Current;
             connection = session ?? new ConnectionSession(settings.Url, settings.Kind);
@@ -101,8 +119,10 @@ namespace NasDesk
             Label brandSubtitle = new Label { Text = "D E S K T O P   W O R K S P A C E", Font = new Font("Segoe UI", 7.3F), ForeColor = NasTheme.Muted, AutoSize = true, Location = new Point(59, 48) };
             brand.Controls.AddRange(new Control[] { logo, brandTitle, brandSubtitle });
             Panel connectionPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 20, 0, 20) };
-            TableLayoutPanel appearance = new TableLayoutPanel { Dock = DockStyle.Right, Width = 208, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            TableLayoutPanel appearance = new TableLayoutPanel { Dock = DockStyle.Right, Width = 304, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
+            appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
             appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
             appearance.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             appearance.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -118,6 +138,9 @@ namespace NasDesk
             themeButton.Click += delegate { themeMenu.Show(themeButton, new Point(themeButton.Width - themeMenu.GetPreferredSize(Size.Empty).Width, themeButton.Height + 6)); };
             appearance.Controls.Add(connectionBadge, 0, 0);
             appearance.Controls.Add(themeButton, 2, 0);
+            ShellButton securityButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "보안", Glyph = ShellGlyph.Settings, AccessibleName = "보안 및 개인정보 설정", Enabled = !popup };
+            securityButton.Click += delegate { ShowSecuritySettings(); };
+            appearance.Controls.Add(securityButton, 4, 0);
             connectionPanel.Controls.Add(appearance);
             header.Controls.Add(brand, 0, 0);
             header.Controls.Add(connectionPanel, 1, 0);
@@ -164,7 +187,7 @@ namespace NasDesk
 
             if (!popup)
             {
-                ContextMenuStrip menu = new ContextMenuStrip();
+                ContextMenuStrip menu = trayMenu = new ContextMenuStrip();
                 menu.BackColor = NasTheme.Surface;
                 menu.ForeColor = NasTheme.Text;
                 menu.Font = new Font("Malgun Gothic", 9F);
@@ -177,12 +200,18 @@ namespace NasDesk
                 ToolStripMenuItem themes = new ToolStripMenuItem("색상 테마");
                 AddPaletteItems(themes.DropDownItems);
                 menu.Items.Add(themes);
+                menu.Items.Add("보안 및 개인정보", null, delegate { RestoreFromTray(); ShowSecuritySettings(); });
                 menu.Items.Add(new ToolStripSeparator());
                 menu.Items.Add("완전 종료", null, delegate { RequestExit(); });
                 TrayMenuStyle.Configure(menu);
-                tray = new NotifyIcon { Text = Program.AppName, Icon = appIcon, ContextMenuStrip = menu, Visible = true };
-                tray.DoubleClick += delegate { RestoreFromTray(); };
-                tray.BalloonTipClicked += delegate { RestoreFromTray(); };
+                // Local and visual tests exercise tray behavior without creating
+                // a native notification icon or adding an entry to Windows.
+                if (!testMode)
+                {
+                    tray = new NotifyIcon { Text = Program.AppName, Icon = appIcon, ContextMenuStrip = menu, Visible = true };
+                    tray.DoubleClick += delegate { RestoreFromTray(); };
+                    tray.BalloonTipClicked += delegate { RestoreFromTray(); };
+                }
                 Shown += async delegate { await InitializeAsync(null); };
             }
             NasTheme.Changed += OnThemeChanged;
@@ -300,7 +329,8 @@ namespace NasDesk
 
         private WebView2 CreateBrowser()
         {
-            WebView2 browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = NasTheme.Surface };
+            WebView2 browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = NasTheme.Surface,
+                CreationProperties = new CoreWebView2CreationProperties { ProfileName = browserProfileName } };
             browser.KeyDown += delegate(object sender, KeyEventArgs e)
             {
                 if (e.KeyData != (Keys.Control | Keys.L) || popup || historyDialogOpen || exitRequested || IsDisposed) return;
@@ -334,7 +364,7 @@ namespace NasDesk
 
         internal void ShowAddressHistory()
         {
-            if (popup || !Address.HistoryEnabled || historyDialogOpen || exitRequested || IsDisposed || Disposing) return;
+            if (popup || clearingLoginData || securityDialogOpen || !Address.HistoryEnabled || historyDialogOpen || exitRequested || IsDisposed || Disposing) return;
             historyDialogOpen = true;
             try
             {
@@ -374,6 +404,7 @@ namespace NasDesk
         private async Task InitializeBrowserAsync(CoreWebView2Environment sharedEnvironment)
         {
             if (Ready || IsDisposed || Disposing) return;
+            int generation = browserGeneration;
             try
             {
                 if (waitForBrowserExit && browserExitSignal != null)
@@ -381,12 +412,14 @@ namespace NasDesk
                     Task exited = browserExitSignal.Task;
                     if (await Task.WhenAny(exited, Task.Delay(3000)) != exited)
                     {
+                        if (generation != browserGeneration || IsDisposed || exitRequested) return;
                         ShowError("웹 엔진이 아직 종료 중입니다. 잠시 후 다시 연결을 눌러 주세요.");
                         return;
                     }
+                    if (generation != browserGeneration || IsDisposed || exitRequested) return;
                     waitForBrowserExit = false;
                 }
-                if (IsDisposed || Disposing || exitRequested) return;
+                if (IsDisposed || Disposing || exitRequested || generation != browserGeneration) return;
                 if (browserNeedsRecreation)
                 {
                     foreach (MainWindow child in children.ToArray()) child.RequestExit();
@@ -400,25 +433,30 @@ namespace NasDesk
                     browserNeedsRecreation = false;
                     activeNavigationId = 0;
                 }
+                WebView2 initializingBrowser = Browser;
                 CoreWebView2Environment.GetAvailableBrowserVersionString();
-                environment = sharedEnvironment ?? environment ?? await CoreWebView2Environment.CreateAsync(null, profilePath);
+                CoreWebView2Environment selectedEnvironment = sharedEnvironment ?? environment ?? await CoreWebView2Environment.CreateAsync(null, profilePath);
+                if (generation != browserGeneration || IsDisposed || Disposing || exitRequested) return;
+                environment = selectedEnvironment;
                 TaskCompletionSource<bool> exitedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 browserExitSignal = exitedSignal;
                 environment.BrowserProcessExited += delegate { exitedSignal.TrySetResult(true); };
                 if (IsDisposed || Disposing) return;
-                await Browser.EnsureCoreWebView2Async(environment);
-                if (IsDisposed || Disposing) return;
-                CoreWebView2 core = Browser.CoreWebView2;
-                WebView2 initializedBrowser = Browser;
+                await initializingBrowser.EnsureCoreWebView2Async(environment);
+                if (IsDisposed || Disposing || generation != browserGeneration || !Object.ReferenceEquals(Browser, initializingBrowser)) return;
+                CoreWebView2 core = initializingBrowser.CoreWebView2;
+                WebView2 initializedBrowser = initializingBrowser;
                 core.Settings.AreHostObjectsAllowed = false;
                 core.Settings.IsWebMessageEnabled = false;
                 core.Settings.IsPasswordAutosaveEnabled = false;
+                core.Settings.IsGeneralAutofillEnabled = false;
                 core.Settings.IsBuiltInErrorPageEnabled = false;
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(BrowserScrollbarStyle.Script);
                 if (IsDisposed || Disposing || !Object.ReferenceEquals(Browser, initializedBrowser)) return;
                 core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
                 {
                     if (IsDisposed || exitRequested || !Object.ReferenceEquals(Browser, initializedBrowser)) { e.Cancel = true; return; }
+                    if (clearingLoginData && e.Uri != "about:blank") { e.Cancel = true; return; }
                     if (!connection.Allows(e.Uri))
                     {
                         e.Cancel = true;
@@ -430,10 +468,27 @@ namespace NasDesk
                         return;
                     }
                     activeNavigationId = e.NavigationId;
+                    quickConnectBootstrap = connection.IsQuickConnect && e.Uri != "about:blank" && !connection.IsNasOrigin(e.Uri);
                     InvalidatePendingNavigation();
                     if (failureShown) errorPanel.SetBusy(true);
                     status.Text = "NAS에 안전하게 연결하고 있습니다.";
                     SetConnectionState("연결 중", NasTheme.Muted);
+                };
+                core.FrameNavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
+                {
+                    if (IsDisposed || exitRequested || !Object.ReferenceEquals(Browser, initializedBrowser)
+                        || !WebContentPolicy.AllowsRequest(connection, e.Uri, allowExternalContent, quickConnectBootstrap))
+                    { e.Cancel = true; blockedRequests++; }
+                };
+                core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
+                core.WebResourceRequested += delegate(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+                {
+                    // Top-level redirects are independently checked before requests
+                    // by NavigationStarting, including QuickConnect device verification.
+                    if (!IsDisposed && !exitRequested && Object.ReferenceEquals(Browser, initializedBrowser)
+                        && !clearingLoginData && WebContentPolicy.AllowsRequest(connection, e.Request.Uri, allowExternalContent, quickConnectBootstrap)) return;
+                    blockedRequests++;
+                    e.Response = selectedEnvironment.CreateWebResourceResponse(null, 403, "Blocked by NAS Desktop", "Content-Type: text/plain\r\nCache-Control: no-store");
                 };
                 core.NavigationCompleted += delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
                 {
@@ -494,7 +549,7 @@ namespace NasDesk
             }
             catch (Exception error)
             {
-                if (IsDisposed || Disposing || exitRequested) return;
+                if (IsDisposed || Disposing || exitRequested || generation != browserGeneration) return;
                 Ready = false;
                 browserNeedsRecreation = true;
                 InitializationError = error;
@@ -518,7 +573,7 @@ namespace NasDesk
 
         private async Task VerifyQuickConnectNavigationAsync(ConnectionSession session)
         {
-            while (!IsDisposed && !Disposing && !exitRequested && Object.ReferenceEquals(connection, session) && pendingNavigationUrl != null)
+            while (!IsDisposed && !Disposing && !exitRequested && !clearingLoginData && Object.ReferenceEquals(connection, session) && pendingNavigationUrl != null)
             {
                 string target = pendingNavigationUrl;
                 int request = navigationRequest;
@@ -528,7 +583,7 @@ namespace NasDesk
                 try
                 {
                     bool allowed = await session.VerifyAndAllowAsync(target);
-                    if (IsDisposed || Disposing || exitRequested || !Object.ReferenceEquals(connection, session)) return;
+                    if (IsDisposed || Disposing || exitRequested || clearingLoginData || !Object.ReferenceEquals(connection, session)) return;
                     if (request != navigationRequest) continue;
                     if (allowed && Ready) Browser.CoreWebView2.Navigate(target);
                     else if (Ready) ShowError("QuickConnect 연결 주소를 확인하지 못했습니다. NAS의 QuickConnect 설정과 네트워크 상태를 확인한 뒤 다시 연결해 주세요.");
@@ -564,7 +619,7 @@ namespace NasDesk
 
         internal async Task ReconnectAsync()
         {
-            if (IsDisposed || Disposing || exitRequested) return;
+            if (IsDisposed || Disposing || exitRequested || clearingLoginData) return;
             if (failureShown) errorPanel.SetBusy(true);
             try
             {
@@ -584,14 +639,18 @@ namespace NasDesk
         private async void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
         {
             e.Handled = true;
-            if (exitRequested || IsDisposed || Disposing) return;
+            if (exitRequested || IsDisposed || Disposing || clearingLoginData) return;
+            int generation = privacyGeneration;
+            // A blank popup must inherit a verified NAS opener, never an external
+            // iframe that could paint arbitrary HTML under the NAS window chrome.
+            if (e.Uri == "about:blank" && (e.OriginalSourceFrameInfo == null || !connection.IsNasOrigin(e.OriginalSourceFrameInfo.Source))) return;
             ConnectionSession session = connection;
             CoreWebView2Deferral deferral = e.GetDeferral();
             MainWindow child = null;
             try
             {
                 bool allowed = session.Allows(e.Uri) || await session.VerifyAndAllowAsync(e.Uri);
-                if (exitRequested || IsDisposed || Disposing || !Object.ReferenceEquals(connection, session)) return;
+                if (exitRequested || IsDisposed || Disposing || clearingLoginData || generation != privacyGeneration || !Object.ReferenceEquals(connection, session)) return;
                 if (!allowed)
                 {
                     if (e.IsUserInitiated) OpenExternal(e.Uri, true);
@@ -602,7 +661,7 @@ namespace NasDesk
                 // Force HWND creation without displaying an uninitialized window.
                 IntPtr handle = child.Handle;
                 await child.InitializeAsync(environment);
-                if (IsDisposed || exitRequested || !child.Ready || !Object.ReferenceEquals(connection, session)) { child.Dispose(); return; }
+                if (IsDisposed || exitRequested || clearingLoginData || generation != privacyGeneration || !child.Ready || !Object.ReferenceEquals(connection, session)) { child.Dispose(); return; }
                 e.NewWindow = child.Browser.CoreWebView2;
                 children.Add(child);
                 MainWindow trackedChild = child;
@@ -668,14 +727,14 @@ namespace NasDesk
 
         private void NavigateHome()
         {
-            if (!Ready) return;
+            if (!Ready || clearingLoginData) return;
             InvalidatePendingNavigation();
             Browser.CoreWebView2.Navigate(settings.Url);
         }
 
         private void ReloadPage()
         {
-            if (!Ready) return;
+            if (!Ready || clearingLoginData) return;
             InvalidatePendingNavigation();
             if (failureShown) NavigateHome();
             else Browser.Reload();
@@ -683,16 +742,21 @@ namespace NasDesk
 
         internal bool ApplyConnection(ConnectionSettings requested)
         {
-            if (popup || exitRequested || IsDisposed || Disposing) return false;
+            if (popup || clearingLoginData || exitRequested || IsDisposed || Disposing) return false;
             ConnectionSettings candidate;
+            string nextProfile;
+            bool nextExternalContent;
             try
             {
                 if (requested == null || !ConnectionSettings.TryCreate(requested.Url, requested.Kind, out candidate))
                     throw new ArgumentException("NAS의 HTTPS 관리 주소 또는 QuickConnect ID와 접속 방식을 확인해 주세요.");
+                nextProfile = BrowserProfileIdentity.ForConnection(candidate);
+                nextExternalContent = WebContentPolicy.ReadExternalContentAllowed(securityPath, nextProfile);
                 candidate.Save(settingsPath);
             }
             catch (Exception error) { status.Text = "연결 주소를 저장하지 못했습니다: " + error.Message; return false; }
             string address = candidate.Url;
+            privacyGeneration++;
             foreach (MainWindow child in children.ToArray()) child.RequestExit();
             connection.Dispose();
             connection = new ConnectionSession(address, candidate.Kind);
@@ -703,9 +767,27 @@ namespace NasDesk
             activeNavigationId = 0;
             settings.Url = address;
             settings.Type = candidate.Type;
+            bool profileChanged = !browserProfileName.Equals(nextProfile, StringComparison.Ordinal);
+            browserProfileName = nextProfile;
+            allowExternalContent = nextExternalContent;
+            quickConnectBootstrap = false;
+            blockedRequests = 0;
+            if (profileChanged)
+            {
+                Ready = false;
+                browserGeneration++;
+                initializationTask = null;
+                viewport.Controls.Remove(Browser);
+                Browser.Dispose();
+                Browser = CreateBrowser();
+                Browser.Visible = !failureShown;
+                viewport.Controls.Add(Browser);
+                errorPanel.BringToFront();
+                browserNeedsRecreation = waitForBrowserExit = false;
+            }
             historyWarning = null;
             status.ToolTipText = String.Empty;
-            try { historyStore.Add(candidate); }
+            try { if (!ConnectionAddress.ContainsSensitiveToken(candidate.Url)) historyStore.Add(candidate); }
             catch (Exception historyError)
             {
                 historyWarning = " · 주소 기록 저장 실패";
@@ -736,9 +818,86 @@ namespace NasDesk
             catch (Exception error) { MessageBox.Show(this, "브라우저를 열지 못했습니다.\n" + error.Message, Program.AppName); }
         }
 
+        private void ShowSecuritySettings()
+        {
+            if (popup || historyDialogOpen || securityDialogOpen || clearingLoginData || exitRequested || IsDisposed) return;
+            securityDialogOpen = true;
+            try
+            {
+                using (SecurityDialog dialog = new SecurityDialog(allowExternalContent, SetExternalContentAllowed, ClearCurrentLoginDataAsync))
+                    dialog.ShowDialog(this);
+            }
+            finally { securityDialogOpen = false; }
+        }
+
+        internal void SetExternalContentAllowed(bool allowed)
+        {
+            if (popup || clearingLoginData || exitRequested || IsDisposed) throw new InvalidOperationException("현재는 보안 설정을 변경할 수 없습니다.");
+            WebContentPolicy.SaveExternalContentAllowed(securityPath, browserProfileName, allowed);
+            allowExternalContent = allowed;
+            foreach (MainWindow child in children.ToArray()) child.RequestExit();
+        }
+
+        internal async Task ClearCurrentLoginDataAsync()
+        {
+            if (popup || clearingLoginData || !Ready || exitRequested || IsDisposed)
+                throw new InvalidOperationException("NAS 웹 화면이 준비된 후 다시 시도해 주세요.");
+            clearingLoginData = true;
+            privacyGeneration++;
+            InvalidatePendingNavigation();
+            Address.HistoryEnabled = false;
+            CoreWebView2 core = Browser.CoreWebView2;
+            try
+            {
+                foreach (MainWindow child in children.ToArray()) child.RequestExit();
+                core.Stop();
+                TaskCompletionSource<bool> blank = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                ulong blankNavigationId = 0;
+                EventHandler<CoreWebView2NavigationStartingEventArgs> starting = delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
+                {
+                    if (e.Uri == "about:blank") blankNavigationId = e.NavigationId;
+                };
+                EventHandler<CoreWebView2NavigationCompletedEventArgs> completed = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
+                {
+                    if (e.NavigationId == blankNavigationId) blank.TrySetResult(e.IsSuccess);
+                };
+                core.NavigationStarting += starting;
+                core.NavigationCompleted += completed;
+                try
+                {
+                    core.Navigate("about:blank");
+                    if (await Task.WhenAny(blank.Task, Task.Delay(10000)) != blank.Task || !await blank.Task)
+                        throw new InvalidOperationException("기존 웹 화면을 닫지 못했습니다. 다시 시도해 주세요.");
+                }
+                finally
+                {
+                    core.NavigationStarting -= starting;
+                    core.NavigationCompleted -= completed;
+                }
+                if (exitRequested || IsDisposed) return;
+                // The named profile contains only this configured NAS identity.
+                // Keep the document blank until cookies, storage and permissions
+                // are cleared so the old page cannot immediately refill them.
+                await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.AllProfile);
+                foreach (CoreWebView2PermissionSetting permission in await core.Profile.GetNonDefaultPermissionSettingsAsync())
+                    await core.Profile.SetPermissionStateAsync(permission.PermissionKind, permission.PermissionOrigin, CoreWebView2PermissionState.Default);
+                if (exitRequested || IsDisposed) return;
+                status.Text = "현재 NAS의 로그인 데이터를 삭제했습니다. 다시 로그인해 주세요.";
+                // User data clearing does not revoke NAS server-side sessions.
+                // Remain blank until the user explicitly reconnects, avoiding
+                // automatic login/storage creation directly after clearing.
+                SetConnectionState("로그인 데이터 삭제됨", NasTheme.Muted);
+            }
+            finally
+            {
+                clearingLoginData = false;
+                if (!IsDisposed && !Disposing) Address.HistoryEnabled = !popup;
+            }
+        }
+
         internal void HideToTray()
         {
-            if (!TrayVisible) return;
+            if (!TrayAvailable) return;
             foreach (MainWindow child in children)
             {
                 if (child.Visible && !hiddenChildren.Contains(child)) hiddenChildren.Add(child);
@@ -747,7 +906,7 @@ namespace NasDesk
             }
             Hide();
             // Keep WebView alive; no TrySuspend, cache deletion, or logout on hide.
-            if (!balloonShown && !testMode)
+            if (!balloonShown && ActualTrayRegistered)
             {
                 balloonShown = true;
                 tray.ShowBalloonTip(3000, Program.AppName, "트레이에서 계속 실행 중입니다. 더블클릭하면 다시 열립니다. 종료하려면 우클릭 → 완전 종료를 선택하세요.", ToolTipIcon.Info);
@@ -781,7 +940,7 @@ namespace NasDesk
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (ShouldHide(e.CloseReason, exitRequested, TrayVisible, popup))
+            if (ShouldHide(e.CloseReason, exitRequested, TrayAvailable, popup))
             {
                 e.Cancel = true;
                 HideToTray();
@@ -811,9 +970,9 @@ namespace NasDesk
                 if (tray != null)
                 {
                     tray.Visible = false;
-                    if (tray.ContextMenuStrip != null) tray.ContextMenuStrip.Dispose();
                     tray.Dispose();
                 }
+                if (trayMenu != null) trayMenu.Dispose();
                 Browser.Dispose();
                 toolTips.Dispose();
                 appIcon.Dispose();

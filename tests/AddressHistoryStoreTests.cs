@@ -49,7 +49,7 @@ namespace NasDesk
             check(File.ReadAllText(path) == afterRemove && !history.Remove(quickConnect),
                 "Reopening history does not automatically re-add a deleted address");
 
-            object parsed = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(path));
+            object parsed = new JavaScriptSerializer().DeserializeObject(LocalProtectedJson.Decode(File.ReadAllText(path), AddressHistoryStore.ProtectionPurpose));
             IDictionary<string, object> document = (IDictionary<string, object>)parsed;
             object[] serializedEntries = (object[])document["Entries"];
             bool onlyAddressFields = document.Count == 1;
@@ -58,7 +58,7 @@ namespace NasDesk
                 IDictionary<string, object> entry = (IDictionary<string, object>)value;
                 onlyAddressFields &= entry.Count == 3 && entry.ContainsKey("Url") && entry.ContainsKey("Type") && entry.ContainsKey("Name");
             }
-            check(onlyAddressFields, "Persisted address history contains only Entries with Url, Type and Name fields");
+            check(onlyAddressFields, "Protected address-history payload contains only Entries with Url, Type and Name fields");
 
             string valid = File.ReadAllText(path);
             bool invalidRejected = true;
@@ -131,6 +131,72 @@ namespace NasDesk
                 "An unreadable history propagates its I/O failure instead of appearing empty");
 
             RunNamedHistoryTests(directory, first, second, check);
+            RunProtectedHistoryTests(directory, first, check);
+        }
+
+        private static void RunProtectedHistoryTests(string directory, ConnectionSettings first, Action<bool, string> check)
+        {
+            string path = Path.Combine(directory, "protected-history.json");
+            AddressHistoryStore history = new AddressHistoryStore(path);
+            ConnectionSettings token = Direct("https://token-history.test/ui/?access_token=history-fixture-secret#/signin?code=fragment-fixture-secret");
+            history.Add(token, "보호할 NAS 이름");
+            string stored = File.ReadAllText(path);
+            IDictionary<string, object> envelope = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(stored);
+            check(envelope.Count == 3 && (string)envelope["Protection"] == "DPAPI.CurrentUser" && (int)envelope["Version"] == 1
+                && envelope["Payload"] is string && !stored.Contains("token-history.test") && !stored.Contains("history-fixture-secret")
+                && !stored.Contains("fragment-fixture-secret") && !stored.Contains("보호할 NAS 이름")
+                && history.ReadEntries()[0].Name == "보호할 NAS 이름" && history.Read()[0].Url == token.Url,
+                "History protects names and complete token URLs for the current Windows user without stripping working routes");
+            check(!history.ProtectIfNeeded() && File.ReadAllText(path) == stored,
+                "Already protected history is validated without rewriting ciphertext on startup migration");
+
+            string legacy = "{\"Entries\":[{\"Url\":\"https://legacy-protection.test/?sid=legacy-fixture-secret\",\"Type\":\"https\",\"Name\":\"이전 이름\"}]}";
+            File.WriteAllText(path, legacy);
+            check(history.ReadEntries()[0].Name == "이전 이름" && File.ReadAllText(path) == legacy
+                && history.ProtectIfNeeded() && history.Read()[0].Url.Contains("sid=legacy-fixture-secret")
+                && !File.ReadAllText(path).Contains("legacy-fixture-secret") && history.ReadEntries()[0].Name == "이전 이름",
+                "Explicit legacy history migration preserves names and URL parameters and replaces plaintext with protected data");
+
+            stored = File.ReadAllText(path);
+            envelope = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(stored);
+            byte[] encrypted = Convert.FromBase64String((string)envelope["Payload"]);
+            encrypted[encrypted.Length - 1] ^= 1;
+            envelope["Payload"] = Convert.ToBase64String(encrypted);
+            string tampered = new JavaScriptSerializer().Serialize(envelope);
+            File.WriteAllText(path, tampered);
+            bool rejectedRead = false, rejectedAdd = false, rejectedMigration = false;
+            try { history.Read(); }
+            catch (InvalidDataException) { rejectedRead = true; }
+            try { history.Add(first); }
+            catch (InvalidDataException) { rejectedAdd = true; }
+            try { history.ProtectIfNeeded(); }
+            catch (InvalidDataException) { rejectedMigration = true; }
+            check(rejectedRead && rejectedAdd && rejectedMigration && File.ReadAllText(path) == tampered,
+                "Unreadable or tampered protected history is reported and never replaced by Add or migration");
+
+            string connectionPath = Path.Combine(directory, "wrong-purpose-connection.json");
+            first.Save(connectionPath);
+            string otherPurpose = File.ReadAllText(connectionPath);
+            File.WriteAllText(path, otherPurpose);
+            bool wrongPurposeRejected = false;
+            try { history.Read(); }
+            catch (InvalidDataException) { wrongPurposeRejected = true; }
+            check(wrongPurposeRejected && File.ReadAllText(path) == otherPurpose,
+                "Protected connection data cannot be reused as an address-history payload");
+
+            File.WriteAllText(path, legacy);
+            bool migrationFailed = false;
+            using (FileStream held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                try { history.ProtectIfNeeded(); }
+                catch (IOException) { migrationFailed = true; }
+                catch (UnauthorizedAccessException) { migrationFailed = true; }
+            }
+            check(migrationFailed && File.ReadAllText(path) == legacy && Directory.GetFiles(directory, "protected-history.json.*.tmp").Length == 0,
+                "Failed history protection migration preserves the original plaintext and removes its protected temporary file");
+            string missingPath = Path.Combine(directory, "missing-protected-history.json");
+            check(!new AddressHistoryStore(missingPath).ProtectIfNeeded() && !File.Exists(missingPath),
+                "Protecting missing history does not create or repopulate a file");
         }
 
         private static void RunNamedHistoryTests(string directory, ConnectionSettings first, ConnectionSettings second, Action<bool, string> check)

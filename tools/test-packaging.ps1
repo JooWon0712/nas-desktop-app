@@ -66,5 +66,14 @@ try {
     Assert-Check (-not ($actualNames | Where-Object { $_ -match 'connection|history|cookie|profile|extra' })) 'Private settings, address history, browser data and unapproved files are excluded'
 }
 finally { $archive.Dispose() }
+
+# Repackage into the same ZIP and checksum paths, as normal repeated builds do.
+$firstArchiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+[IO.File]::AppendAllText((Join-Path $fixtureOutput 'NasDesktop.exe'), 'updated packaging fixture')
+& (Join-Path $projectRoot 'package.ps1') -AppDirectory $fixtureOutput -OutputFile $archivePath
+$updatedArchiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$checksum = (Get-Content -LiteralPath (Join-Path $testRoot 'SHA256SUMS.txt') -Raw).Trim()
+Assert-Check (($firstArchiveHash.ToLowerInvariant() -cne $updatedArchiveHash) -and ($checksum -ceq ($updatedArchiveHash + '  public.zip'))) 'Repeated packaging atomically replaces an existing checksum with the updated ZIP digest'
+Assert-Check (-not (Get-ChildItem -LiteralPath $testRoot -Filter 'SHA256SUMS.*.tmp')) 'Repeated packaging leaves no temporary checksum file'
 Assert-Check (-not (Get-ChildItem -LiteralPath $testRoot -Directory -Filter '.package-staging-*')) 'Temporary package staging is removed'
 Assert-Check ((Test-Path -LiteralPath (Join-Path $fixtureOutput 'connection.local.json')) -and (Test-Path -LiteralPath (Join-Path $fixtureOutput 'address-history.json'))) 'Packaging leaves private source settings and address history untouched'

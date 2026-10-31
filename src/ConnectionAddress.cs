@@ -64,6 +64,38 @@ namespace NasDesk
             return value.Substring(start, end - start).IndexOf('@') < 0;
         }
 
+        // This conservative key check only suppresses automatic MRU duplication.
+        // It never rewrites a URL and is not a complete detector of secrets.
+        internal static bool ContainsSensitiveToken(string value)
+        {
+            Uri uri;
+            if (!TrySecureUri(value, out uri)) return false;
+            return HasSensitiveParameter(uri.Query) || HasSensitiveParameter(uri.Fragment);
+        }
+
+        private static bool HasSensitiveParameter(string parameters)
+        {
+            foreach (string part in parameters.Split(new[] { '?', '&', ';', '#' }))
+            {
+                int separator = part.IndexOf('=');
+                if (separator < 0 || separator == part.Length - 1) continue;
+                string key;
+                try { key = Uri.UnescapeDataString(part.Substring(0, separator)); }
+                catch (UriFormatException) { continue; }
+                key = key.ToLowerInvariant().Replace("_", String.Empty).Replace("-", String.Empty);
+                switch (key)
+                {
+                    case "token": case "accesstoken": case "refreshtoken": case "idtoken":
+                    case "auth": case "authorization": case "password": case "passwd": case "pwd":
+                    case "session": case "sessionid": case "sid": case "synotoken":
+                    case "otp": case "code": case "ticket": case "secret": case "key": case "apikey":
+                    case "csrftoken": case "xsrftoken":
+                        return true;
+                }
+            }
+            return false;
+        }
+
         // Used only to preserve the behavior of settings created before a connection type existed.
         internal static bool TryParse(string input, out ConnectionAddress address)
         {

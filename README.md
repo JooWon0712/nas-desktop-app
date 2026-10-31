@@ -2,7 +2,7 @@
 
 NAS 웹 관리 화면을 전용 창에서 사용하는 **Windows 10/11 x64 전용** 앱입니다. 직접 HTTPS 주소와 Synology QuickConnect를 지원합니다. macOS·Linux는 지원하지 않습니다.
 
-**[Windows ZIP 다운로드](https://github.com/JooWon0712/nas-desktop-app/releases/download/v0.13.0-preview.1/NasDesktop-windows-x64.zip)** · [릴리스·체크섬](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.13.0-preview.1)
+**[Windows ZIP 다운로드](https://github.com/JooWon0712/nas-desktop-app/releases/download/v0.14.0-preview.1/NasDesktop-windows-x64.zip)** · [릴리스·체크섬](https://github.com/JooWon0712/nas-desktop-app/releases/tag/v0.14.0-preview.1)
 
 ## 주요 기능
 
@@ -10,6 +10,7 @@ NAS 웹 관리 화면을 전용 창에서 사용하는 **Windows 10/11 x64 전�
 - 읽기 전용 주소창과 주소 기록 모달을 통한 NAS 연결
 - NAS 이름 지정·수정, 주소 추가·삭제, 최근 30개 기록
 - QuickConnect 자동 주소 전환, 라이트·다크·시스템 모드와 6가지 색상
+- Windows 계정으로 주소·기록 보호, NAS별 로그인 프로필과 보안 설정
 
 ## 빠른 시작
 
@@ -24,11 +25,13 @@ NAS 웹 관리 화면을 전용 창에서 사용하는 **Windows 10/11 x64 전�
 
 **상단 URL은 항상 읽기 전용**입니다. 기본 창의 X는 트레이 숨김이며, 종료는 **트레이 → 완전 종료**를 사용합니다.
 
+업데이트할 때는 완전 종료한 뒤 새 ZIP의 네 파일을 **기존 실행 폴더에 덮어써 EXE의 전체 경로를 유지**하세요. [업데이트 안내](docs/USAGE.md#업데이트)를 참고하세요.
+
 ## 사용 전 확인
 
 - 제조사 공식 앱이 아닌 **미서명 프리뷰**입니다. 실제 제조사별 2FA·업로드·패키지 전체 호환성 검증은 끝나지 않았습니다.
 - HTTPS 인증서 검증을 유지하며, HTTP 직접 접속이나 인증서 경고 무시는 지원하지 않습니다.
-- 주소·이름은 로컬 평문 JSON에 저장하고, NAS들은 같은 WebView2 프로필을 공유합니다. [보안·개인정보 상세](docs/SECURITY.md)를 확인하세요.
+- 주소·이름을 DPAPI로 보호하고 NAS 식별 기준별로 프로필을 나눕니다. 같은 Windows 계정에서 실행되는 악성 프로그램까지 차단하지는 않습니다. [보안·개인정보 상세](docs/SECURITY.md)를 확인하세요.
 
 ## 상세 문서
 

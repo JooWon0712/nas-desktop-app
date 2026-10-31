@@ -22,12 +22,75 @@ while ($outputAncestor) {
 $localSettingsSource = Join-Path $projectDirectory 'connection.local.json'
 $localSettingsOutput = Join-Path $output 'connection.local.json'
 $version = '1.0.4314.35'
-$packageRoot = Join-Path $PSScriptRoot ".packages\webview2-$version"
-if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'))) {
-    New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot '.packages') -Force | Out-Null
-    $zip = Join-Path $PSScriptRoot '.packages\webview2.zip'
-    Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $zip
-    Expand-Archive -LiteralPath $zip -DestinationPath $packageRoot -Force
+$cacheDirectory = Join-Path $PSScriptRoot '.packages'
+$packageRoot = Join-Path $cacheDirectory "webview2-$version"
+# NuGet's SHA-512 for this exact version. Update the package and DLL pins together.
+# https://api.nuget.org/v3/catalog0/data/2026.10.23.06.50.10/microsoft.web.webview2.1.0.4314.35.json
+$packageSha512 = '70E6A256A3F7066407327C46A59CC034CDB6B545E0C9CAE2B322478C818DCC868CB26F225E3ECAC7E71E620F916D8C09B734F4D3DA9F7054E872F54B63E7A433'
+# These file hashes were derived only after verifying that official package hash.
+$sdkFiles = @(
+    @{ Path = 'lib\net462\Microsoft.Web.WebView2.Core.dll'; SHA512 = 'B5AF2FBCCB3F3780FA9A32C06AB0A6EC375F8E22E278986518F514931BDAE9B2231675830C021FFF791D18DB11B76D6FA28DE9024E06C6990116BDC2E044EF91' },
+    @{ Path = 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'; SHA512 = 'F9ED7E2E4388758437F79BE336190E53986CF21803142C074388CE38A96D5F9456C21F9701F67884437FCA261D377825299A811C7029AECE3426FD4BF9BD0744' },
+    @{ Path = 'runtimes\win-x64\native\WebView2Loader.dll'; SHA512 = 'D6C8FEFE85E459F68E8FBB7A2FECC0FF4306A3282FFC6874D2395D5750FB77CF0B69C6D1AE83B481325AC97B745CB1D6879B47076688EBAEE69636173E77671B' }
+)
+
+function Assert-UnlinkedSdkPath([string]$Path) {
+    $ancestor = [IO.Path]::GetFullPath($Path)
+    while ($ancestor) {
+        if ((Test-Path -LiteralPath $ancestor) -and (((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw 'WebView2 SDK paths must not pass through linked files or directories.'
+        }
+        $ancestor = [IO.Path]::GetDirectoryName($ancestor)
+    }
+}
+
+function Test-SdkCache {
+    $complete = $true
+    foreach ($file in $sdkFiles) {
+        $sdkPath = Join-Path $packageRoot $file.Path
+        Assert-UnlinkedSdkPath $sdkPath
+        if (-not (Test-Path -LiteralPath $sdkPath -PathType Leaf)) { $complete = $false; continue }
+        if ((Get-FileHash -LiteralPath $sdkPath -Algorithm SHA512).Hash -cne $file.SHA512) {
+            throw "WebView2 SDK cache integrity check failed: $($file.Path). Remove the SDK cache and rebuild."
+        }
+    }
+    return $complete
+}
+
+Assert-UnlinkedSdkPath $packageRoot
+if (-not (Test-SdkCache)) {
+    New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+    $zip = Join-Path $cacheDirectory "microsoft.web.webview2.$version.zip"
+    Assert-UnlinkedSdkPath $zip
+    if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+        $download = Join-Path $cacheDirectory ("webview2-download-" + [Guid]::NewGuid().ToString('N') + '.zip')
+        try {
+            Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $download
+            if ((Get-FileHash -LiteralPath $download -Algorithm SHA512).Hash -cne $packageSha512) {
+                throw 'Downloaded WebView2 package failed the pinned NuGet SHA-512 check.'
+            }
+            [IO.File]::Move($download, $zip)
+        }
+        finally { if (Test-Path -LiteralPath $download -PathType Leaf) { Remove-Item -LiteralPath $download -Force } }
+    }
+    if ((Get-FileHash -LiteralPath $zip -Algorithm SHA512).Hash -cne $packageSha512) {
+        throw 'Cached WebView2 package failed the pinned NuGet SHA-512 check. Remove the package cache and rebuild.'
+    }
+    # Extract only verified files needed by this build; never overwrite unrelated cache paths.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        foreach ($file in $sdkFiles) {
+            $destination = Join-Path $packageRoot $file.Path
+            Assert-UnlinkedSdkPath $destination
+            $entry = $archive.GetEntry($file.Path.Replace('\', '/'))
+            if ($null -eq $entry) { throw "Verified WebView2 package is missing $($file.Path)." }
+            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination, $true)
+        }
+    }
+    finally { $archive.Dispose() }
+    if (-not (Test-SdkCache)) { throw 'Verified WebView2 SDK extraction is incomplete.' }
 }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -37,7 +100,7 @@ $icon = Join-Path $PSScriptRoot '.packages\app.ico'
 if ($LASTEXITCODE -ne 0) { throw 'Icon tool compilation failed.' }
 & $iconTool $icon
 if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed.' }
-$references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll')
+$references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll','System.Security.dll')
 $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'
 $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'
 $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',"/out:$(Join-Path $output 'NasDesktop.exe')", "/win32icon:$icon", "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')")

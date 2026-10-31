@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Web.Script.Serialization;
 
 namespace NasDesk
 {
@@ -74,6 +76,88 @@ namespace NasDesk
                 && !ConnectionSettings.IsInternal("https://@nas.local/", "https://nas.local/")
                 && !ConnectionSettings.IsInternal(null, "https://nas.local/"),
                 "URL and internal-navigation checks reject empty userinfo and non-absolute input");
+
+            RunProtectedSettingsTests(directory, check);
+        }
+
+        private static void RunProtectedSettingsTests(string directory, Action<bool, string> check)
+        {
+            string path = Path.Combine(directory, "protected-connection.json");
+            ConnectionSettings connection;
+            if (!ConnectionSettings.TryCreate("https://token-settings.test/ui/?access_token=settings-fixture-secret#/login?code=fragment-fixture-secret",
+                ConnectionKind.DirectHttps, out connection)) throw new Exception("Invalid fixture.");
+            connection.Save(path);
+            string stored = File.ReadAllText(path);
+            IDictionary<string, object> envelope = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(stored);
+            check(envelope.Count == 3 && (string)envelope["Protection"] == "DPAPI.CurrentUser" && (int)envelope["Version"] == 1
+                && !stored.Contains("token-settings.test") && !stored.Contains("settings-fixture-secret")
+                && !stored.Contains("fragment-fixture-secret") && ConnectionSettings.Read(path).Url == connection.Url
+                && ConnectionSettings.Read(path).Kind == ConnectionKind.DirectHttps,
+                "Current connection protects complete query and fragment token URLs without changing the reconnect address");
+            check(!ConnectionSettings.ProtectIfNeeded(path) && File.ReadAllText(path) == stored,
+                "Protected connection startup migration validates but does not rewrite existing ciphertext");
+
+            string legacy = "{\"Url\":\"https://legacy-settings.test/ui/?sid=legacy-fixture-secret#/signin\",\"Type\":\"https\"}";
+            File.WriteAllText(path, legacy);
+            string legacyUrl = ConnectionSettings.Read(path).Url;
+            check(File.ReadAllText(path) == legacy && ConnectionSettings.ProtectIfNeeded(path)
+                && ConnectionSettings.Read(path).Url == legacyUrl && !File.ReadAllText(path).Contains("legacy-fixture-secret"),
+                "Explicit connection migration protects legacy plaintext while preserving its full address");
+
+            stored = File.ReadAllText(path);
+            envelope = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(stored);
+            byte[] encrypted = Convert.FromBase64String((string)envelope["Payload"]);
+            encrypted[encrypted.Length - 1] ^= 1;
+            envelope["Payload"] = Convert.ToBase64String(encrypted);
+            string tampered = new JavaScriptSerializer().Serialize(envelope);
+            File.WriteAllText(path, tampered);
+            bool rejectedRead = false, rejectedMigration = false;
+            try { ConnectionSettings.Read(path); }
+            catch (InvalidDataException) { rejectedRead = true; }
+            try { ConnectionSettings.ProtectIfNeeded(path); }
+            catch (InvalidDataException) { rejectedMigration = true; }
+            check(rejectedRead && rejectedMigration && File.ReadAllText(path) == tampered,
+                "Tampered protected connection data is reported and never silently reset by migration");
+
+            bool malformedPreserved = true;
+            foreach (string malformed in new[] { "{bad", "{\"Protection\":\"DPAPI.CurrentUser\",\"Version\":2,\"Payload\":\"bad\"}",
+                "{\"Protection\":\"unknown\",\"Version\":1,\"Payload\":\"bad\"}", "{\"Protection\":\"DPAPI.CurrentUser\",\"Version\":1,\"Payload\":\"not-base64\"}" })
+            {
+                File.WriteAllText(path, malformed);
+                bool rejected = false;
+                try { ConnectionSettings.ProtectIfNeeded(path); }
+                catch (InvalidDataException) { rejected = true; }
+                malformedPreserved &= rejected && File.ReadAllText(path) == malformed;
+            }
+            check(malformedPreserved, "Malformed or unsupported protection envelopes cannot overwrite a saved settings file during migration");
+
+            File.WriteAllText(path, legacy);
+            bool migrationFailed = false;
+            using (FileStream held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                try { ConnectionSettings.ProtectIfNeeded(path); }
+                catch (IOException) { migrationFailed = true; }
+                catch (UnauthorizedAccessException) { migrationFailed = true; }
+            }
+            check(migrationFailed && File.ReadAllText(path) == legacy && Directory.GetFiles(directory, "protected-connection.json.*.tmp").Length == 0,
+                "A failed connection protection migration keeps the original and leaves no temporary file");
+
+            connection.Url = "HTTPS://TOKEN-SETTINGS.TEST:443/ui/?access_token=preserved-fixture-secret";
+            string uncommittedUrl = connection.Url;
+            bool saveFailed = false;
+            using (FileStream held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                try { connection.Save(path); }
+                catch (IOException) { saveFailed = true; }
+                catch (UnauthorizedAccessException) { saveFailed = true; }
+            }
+            check(saveFailed && connection.Url == uncommittedUrl && File.ReadAllText(path) == legacy
+                && Directory.GetFiles(directory, "protected-connection.json.*.tmp").Length == 0,
+                "Failed protected connection saves do not mutate the caller's URL or replace the current settings");
+
+            string missing = Path.Combine(directory, "missing-protected-connection.json");
+            check(!ConnectionSettings.ProtectIfNeeded(missing) && !File.Exists(missing),
+                "Protecting missing connection settings does not create an address file");
         }
     }
 }

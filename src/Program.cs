@@ -14,6 +14,7 @@ namespace NasDesk
         internal static readonly string AppearancePath = Path.Combine(DataDirectory, "appearance.json");
         internal static readonly string HistoryPath = Path.Combine(DataDirectory, "address-history.json");
         internal static readonly string ProfileDirectory = Path.Combine(DataDirectory, "WebView2");
+        internal static readonly string SecurityPath = Path.Combine(DataDirectory, "security.json");
 
         [STAThread]
         private static void Main()
@@ -31,12 +32,20 @@ namespace NasDesk
                 {
                     string path = File.Exists(SettingsPath) ? SettingsPath : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "connection.local.json");
                     ConnectionSettings settings;
-                    try { settings = ConnectionSettings.Read(path); }
+                    try
+                    {
+                        settings = ConnectionSettings.Read(path);
+                        // Only migrate the per-user application data, never the
+                        // developer's optional bundled settings file.
+                        if (path == SettingsPath) ConnectionSettings.ProtectIfNeeded(path);
+                    }
                     catch (Exception error)
                     {
                         MessageBox.Show("연결 설정을 읽지 못했습니다. 주소를 다시 입력해 주세요.\n\n" + error.Message, AppName);
                         settings = new ConnectionSettings();
                     }
+                    try { new AddressHistoryStore(HistoryPath).ProtectIfNeeded(); }
+                    catch (Exception error) { MessageBox.Show("주소 기록을 보호하지 못했습니다. 기존 파일은 유지합니다.\n\n" + error.Message, AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
                     if (!ConnectionSettings.IsValid(settings.Url))
                     {
                         AddressHistoryStore history = new AddressHistoryStore(HistoryPath);
@@ -51,7 +60,7 @@ namespace NasDesk
                                     return false;
                                 }
                                 settings = candidate;
-                                try { history.Add(candidate); }
+                                try { if (!ConnectionAddress.ContainsSensitiveToken(candidate.Url)) history.Add(candidate); }
                                 catch (IOException) { }
                                 catch (UnauthorizedAccessException) { }
                                 return true;

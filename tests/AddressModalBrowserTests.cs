@@ -15,7 +15,7 @@ namespace NasDesk
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool IsWindowEnabled(IntPtr window);
 
-        internal static async Task RunAsync(MainWindow window, CoreWebView2 core, string settingsPath, Action<bool, string> check)
+        internal static async Task RunAsync(MainWindow window, CoreWebView2 core, string settingsPath, string fixture, Action<bool, string> check)
         {
             AddressBar address = window.Address;
             ConnectionSettings original = ConnectionSettings.Read(settingsPath);
@@ -24,6 +24,7 @@ namespace NasDesk
             string cookies = await core.ExecuteScriptAsync("document.cookie");
             string storage = await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')");
             string profile = core.Environment.UserDataFolder;
+            string[] fixtureHosts = { "nas-desk.test", "nas-desk-alternate.test" };
             string historyPath = settingsPath + ".history.json";
             AddressHistoryStore store = new AddressHistoryStore(historyPath);
             ConnectionSettings alternate;
@@ -103,14 +104,14 @@ namespace NasDesk
                 });
             }
 
-            await SubmitAndWait(core, alternate.Url, delegate
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts, delegate
             {
                 InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
                 {
                     SelectRow(dialog, alternate);
                     Field<ShellButton>(dialog, "useButton").PerformClick();
                 });
-            });
+            }, alternate.Url, "NAS Desk local fixture");
             check(window.HistoryDialog == null && address.Input.ReadOnly && !address.TypePicker.Enabled
                 && address.AddressText == alternate.Url && ConnectionSettings.Read(settingsPath).Url == alternate.Url
                 && store.ReadEntries()[0].Name == "백업 NAS" && Object.ReferenceEquals(core, window.Browser.CoreWebView2)
@@ -118,7 +119,7 @@ namespace NasDesk
                 "Connecting a saved modal row immediately applies and loads it while keeping the main address read-only");
 
             const string added = "https://nas-desk-alternate.test/index.html?modal=new";
-            await SubmitAndWait(core, added, delegate
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts, delegate
             {
                 InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
                 {
@@ -130,18 +131,18 @@ namespace NasDesk
                         "Adding a URL inside the modal selects its saved record without changing the connected NAS");
                     Field<ShellButton>(dialog, "useButton").PerformClick();
                 });
-            });
+            }, added, "NAS Desk local fixture");
             check(address.AddressText == added && address.Input.ReadOnly && store.ReadEntries()[0].Name == "새 NAS",
                 "A new NAS can be entered, named, saved and connected entirely inside the address history modal");
 
-            await SubmitAndWait(core, original.Url, delegate
+            core = await BrowserFixtureNavigation.RunAsync(window, fixture, fixtureHosts, delegate
             {
                 InModal(window, delegate { address.HistoryButton.PerformClick(); }, delegate(AddressHistoryDialog dialog)
                 {
                     SelectRow(dialog, original);
                     Field<ShellButton>(dialog, "useButton").PerformClick();
                 });
-            });
+            }, original.Url, "NAS Desk local fixture");
             check(address.Input.ReadOnly && address.AddressText == original.Url && core.Source == original.Url,
                 "Returning to the original NAS through history never creates an editable main URL field");
         }
@@ -213,22 +214,5 @@ namespace NasDesk
             return (bool)control.GetType().GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(control, new object[] { message, key });
         }
 
-        private static async Task SubmitAndWait(CoreWebView2 core, string target, Action submit)
-        {
-            bool completed = false;
-            EventHandler<CoreWebView2NavigationCompletedEventArgs> handler = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) { if (e.IsSuccess && core.Source == target) completed = true; };
-            core.NavigationCompleted += handler;
-            try
-            {
-                submit();
-                DateTime deadline = DateTime.UtcNow.AddSeconds(10);
-                while (!completed)
-                {
-                    if (DateTime.UtcNow >= deadline) throw new TimeoutException("Modal selection did not connect.");
-                    await Task.Delay(50);
-                }
-            }
-            finally { core.NavigationCompleted -= handler; }
-        }
     }
 }

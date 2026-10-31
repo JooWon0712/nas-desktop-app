@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using System.Web.Script.Serialization;
 
 namespace NasDesk
@@ -28,6 +27,7 @@ namespace NasDesk
 
     internal sealed class AddressHistoryStore
     {
+        internal const string ProtectionPurpose = "address-history";
         private const int MaximumEntries = 30;
         private readonly string path;
         private readonly object gate = new object();
@@ -51,6 +51,22 @@ namespace NasDesk
         internal IList<AddressHistoryEntry> ReadEntries()
         {
             lock (gate) return LoadEntries();
+        }
+
+        internal bool ProtectIfNeeded()
+        {
+            lock (gate)
+            {
+                string stored;
+                try { stored = File.ReadAllText(path); }
+                catch (FileNotFoundException) { return false; }
+                catch (DirectoryNotFoundException) { return false; }
+                bool wasProtected;
+                List<AddressHistoryEntry> entries = ParseEntries(LocalProtectedJson.Decode(stored, ProtectionPurpose, out wasProtected));
+                if (wasProtected) return false;
+                Save(entries);
+                return true;
+            }
         }
 
         internal void Add(ConnectionSettings settings)
@@ -114,6 +130,11 @@ namespace NasDesk
             catch (FileNotFoundException) { return new List<AddressHistoryEntry>(); }
             catch (DirectoryNotFoundException) { return new List<AddressHistoryEntry>(); }
 
+            return ParseEntries(LocalProtectedJson.Decode(json, ProtectionPurpose));
+        }
+
+        private static List<AddressHistoryEntry> ParseEntries(string json)
+        {
             object parsed;
             try { parsed = new JavaScriptSerializer().DeserializeObject(json); }
             catch (ArgumentException error) { throw InvalidHistory(error); }
@@ -194,16 +215,7 @@ namespace NasDesk
             foreach (AddressHistoryEntry entry in entries)
                 saved.Add(new HistoryEntry { Url = entry.Url, Type = entry.Type, Name = entry.Name });
             string json = new JavaScriptSerializer().Serialize(new HistoryDocument { Entries = saved });
-            string directory = Path.GetDirectoryName(path);
-            Directory.CreateDirectory(directory);
-            string temporary = Path.Combine(directory, Path.GetFileName(path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-            try
-            {
-                File.WriteAllText(temporary, json, new UTF8Encoding(false));
-                if (File.Exists(path)) File.Replace(temporary, path, null);
-                else File.Move(temporary, path);
-            }
-            finally { File.Delete(temporary); }
+            LocalProtectedJson.WriteAtomic(path, json, ProtectionPurpose);
         }
 
         private static InvalidDataException InvalidHistory(Exception inner)
