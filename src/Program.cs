@@ -118,16 +118,17 @@ namespace NasDesk
             AutoScaleMode = AutoScaleMode.Dpi;
             Text = "NAS 접속 주소";
             Font = new Font("Malgun Gothic", 9F);
-            ClientSize = new Size(650, 210);
+            ClientSize = new Size(650, 242);
             BackColor = NasTheme.Background;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             Label title = new Label { Text = "내 NAS에 연결", AutoSize = true, ForeColor = NasTheme.Text, Font = new Font("Malgun Gothic", 17F, FontStyle.Bold), Location = new Point(22, 16) };
-            Label label = new Label { Text = "브라우저에서 사용하는 HTTPS 주소를 입력하세요.", AutoSize = true, ForeColor = NasTheme.Muted, Location = new Point(25, 62) };
+            Label label = new Label { Text = "이 PC에서 인증서 경고 없이 열리는 NAS의 직접 HTTPS 주소를 입력하세요.", AutoSize = true, ForeColor = NasTheme.Muted, Location = new Point(25, 62) };
             address = new TextBox { Text = current ?? "https://", Location = new Point(25, 96), Width = 600, BackColor = NasTheme.Surface, ForeColor = NasTheme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 11F) };
-            ShellButton save = new ShellButton { Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Location = new Point(514, 150), Width = 111, Height = 38 };
-            ShellButton cancel = new ShellButton { Text = "취소", Location = new Point(391, 150), Width = 111, Height = 38, DialogResult = DialogResult.Cancel };
+            Label hint = new Label { Text = "예: https://nas.example.com:5001/\nQuickConnect 시작 주소 대신 연결 완료 후의 직접 주소를 사용하세요.", ForeColor = NasTheme.Muted, Location = new Point(25, 132), Size = new Size(600, 36), Font = new Font("Malgun Gothic", 8.5F) };
+            ShellButton save = new ShellButton { Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Location = new Point(514, 182), Width = 111, Height = 38 };
+            ShellButton cancel = new ShellButton { Text = "취소", Location = new Point(391, 182), Width = 111, Height = 38, DialogResult = DialogResult.Cancel };
             save.Click += delegate
             {
                 if (!ConnectionSettings.IsValid(address.Text.Trim()))
@@ -137,7 +138,7 @@ namespace NasDesk
                 }
                 DialogResult = DialogResult.OK;
             };
-            Controls.AddRange(new Control[] { title, label, address, save, cancel });
+            Controls.AddRange(new Control[] { title, label, address, hint, save, cancel });
             NasTheme.ApplyWindowChrome(this);
             AcceptButton = save;
             CancelButton = cancel;

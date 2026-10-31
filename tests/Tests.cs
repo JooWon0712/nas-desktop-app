@@ -118,8 +118,80 @@ namespace NasDesk
             await WaitFor(() => blocked, 5000, "External navigation blocked before request");
             Check(blocked, "Unconfigured origin blocked");
             await RunAddressTests(window, core);
+            await RunRecoveryTests(window, core);
+            await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
             Check(window.IsDisposed && popup.IsDisposed && !window.TrayVisible, "Explicit exit disposes windows and tray");
+        }
+
+        private static async Task RunDownloadTests(CoreWebView2 core)
+        {
+            string destination = Path.Combine(output, "nas-download-fixture.txt");
+            CoreWebView2DownloadOperation download = null;
+            EventHandler<CoreWebView2DownloadStartingEventArgs> started = delegate(object sender, CoreWebView2DownloadStartingEventArgs e)
+            {
+                e.ResultFilePath = destination;
+                e.Handled = false;
+                download = e.DownloadOperation;
+            };
+            core.DownloadStarting += started;
+            try
+            {
+                await core.ExecuteScriptAsync("var file=new Blob(['NAS Desk local download fixture'],{type:'text/plain'}); var link=document.createElement('a'); link.href=URL.createObjectURL(file); link.download='nas-download-fixture.txt'; link.click();");
+                await WaitFor(() => download != null && download.State != CoreWebView2DownloadState.InProgress, 10000, "Local file download start/completion");
+                Check(download.State == CoreWebView2DownloadState.Completed, "Local download completed (interrupt reason: " + download.InterruptReason + ")");
+                Check(File.ReadAllText(destination) == "NAS Desk local download fixture", "File download completes without a toolbar download button");
+                core.OpenDefaultDownloadDialog();
+                Check(core.IsDefaultDownloadDialogOpen && core.Settings.AreBrowserAcceleratorKeysEnabled, "Default download list remains available with browser shortcuts enabled");
+                core.CloseDefaultDownloadDialog();
+            }
+            finally { core.DownloadStarting -= started; }
+        }
+
+        private static async Task RunRecoveryTests(MainWindow window, CoreWebView2 core)
+        {
+            string profile = core.Environment.UserDataFolder;
+            Check(Path.GetFullPath(profile).TrimEnd(Path.DirectorySeparatorChar).Equals(
+                Path.GetFullPath(Path.Combine(output, "profile")).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase),
+                "Crash test targets only the isolated test profile");
+            var originalBrowser = window.Browser;
+            window.HandleProcessFailure(CoreWebView2ProcessFailedKind.GpuProcessExited);
+            window.HandleProcessFailure(CoreWebView2ProcessFailedKind.UtilityProcessExited);
+            Check(window.Ready && Object.ReferenceEquals(originalBrowser, window.Browser)
+                && await core.ExecuteScriptAsync("21*2") == "42", "Auto-recoverable GPU and utility failures do not disable the app");
+
+            bool rendererFailed = false;
+            bool browserFailed = false;
+            core.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs e)
+            {
+                if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited) rendererFailed = true;
+                if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) browserFailed = true;
+            };
+            Task rendererCrash = core.CallDevToolsProtocolMethodAsync("Page.crash", "{}");
+            ObserveExpectedCrash(rendererCrash);
+            await WaitFor(() => rendererFailed, 10000, "Test-profile renderer process failure");
+            await window.ReconnectAsync();
+            await WaitFor(() => window.Ready && core.DocumentTitle == "NAS Desk local fixture", 10000, "Renderer retry reload");
+            Check(Object.ReferenceEquals(originalBrowser, window.Browser), "Actual renderer crash reconnects using the existing control");
+
+            Task browserCrash = core.CallDevToolsProtocolMethodAsync("Browser.crash", "{}");
+            ObserveExpectedCrash(browserCrash);
+            await WaitFor(() => browserFailed && !window.Ready, 10000, "Test-profile browser process failure");
+            await window.ReconnectAsync();
+            Check(window.Ready && originalBrowser.IsDisposed && !Object.ReferenceEquals(originalBrowser, window.Browser)
+                && window.Browser.CoreWebView2.Environment.UserDataFolder == profile,
+                "Actual browser crash recreates the control and retains its profile");
+            CoreWebView2 recovered = window.Browser.CoreWebView2;
+            recovered.SetVirtualHostNameToFolderMapping("nas-desk-alternate.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
+            recovered.Navigate("https://nas-desk-alternate.test/index.html");
+            await WaitFor(() => recovered.DocumentTitle == "NAS Desk local fixture", 10000, "NAS reload after browser recovery");
+            Check(!recovered.Settings.AreHostObjectsAllowed && !recovered.Settings.IsWebMessageEnabled,
+                "Recreated browser restores host isolation and loads the NAS page");
+        }
+
+        private static void ObserveExpectedCrash(Task operation)
+        {
+            operation.ContinueWith(t => { var observed = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private static async Task RunAddressTests(MainWindow window, CoreWebView2 core)

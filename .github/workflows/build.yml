@@ -16,9 +16,12 @@ jobs:
       - name: Build Windows app
         shell: pwsh
         run: ./build.ps1
+      - name: Package public Windows ZIP
+        shell: pwsh
+        run: ./package.ps1
       - name: Upload portable Windows app
         uses: actions/upload-artifact@v7
         with:
           name: SynologyNasDesktop-windows-x64
-          path: dist/SynologyNasDesktop/
+          path: dist/SynologyNasDesktop-windows-x64.zip
           if-no-files-found: error

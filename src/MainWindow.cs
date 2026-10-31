@@ -25,12 +25,18 @@ namespace NasDesk
         private readonly string settingsPath;
         private readonly Panel errorPanel;
         private readonly Label errorText;
+        private readonly Panel viewport;
         private readonly Icon appIcon;
         private readonly ToolTip toolTips = new ToolTip();
         private bool exitRequested;
         private bool balloonShown;
         private CoreWebView2Environment environment;
-        internal readonly WebView2 Browser;
+        private Task initializationTask;
+        private TaskCompletionSource<bool> browserExitSignal;
+        private bool browserNeedsRecreation;
+        private bool waitForBrowserExit;
+        private string lastLoadedUrl;
+        internal WebView2 Browser { get; private set; }
         internal bool Ready { get; private set; }
         internal Exception InitializationError { get; private set; }
         internal bool TrayVisible { get { return tray != null && tray.Visible; } }
@@ -61,7 +67,7 @@ namespace NasDesk
             Icon = appIcon;
             BackColor = NasTheme.Background;
 
-            Browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(24, 27, 32) };
+            Browser = CreateBrowser();
             Panel top = new Panel { Dock = DockStyle.Top, Height = 148, Padding = new Padding(20, 8, 20, 14), BackColor = NasTheme.Background };
             TableLayoutPanel header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 72, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -77,33 +83,24 @@ namespace NasDesk
             connection.Controls.Add(connectionBadge);
             header.Controls.Add(brand, 0, 0);
             header.Controls.Add(connection, 1, 0);
-            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 48, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
+            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 48, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
             ShellButton home = CreateButton("NAS 홈", ShellGlyph.Home, false, delegate { NavigateHome(); });
             home.Compact = true;
             ShellButton refresh = CreateButton("새로 고침", ShellGlyph.Refresh, false, delegate { ReloadPage(); });
             refresh.Compact = true;
-            Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 12, 4) };
+            Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4) };
             Address.SetAddress(settings.Url);
             Address.ConnectRequested += delegate { ApplyAddress(); };
             if (popup) Address.EditSwitch.Enabled = false;
-            ShellButton downloads = CreateButton("다운로드", ShellGlyph.Download, false, delegate { if (Ready) Browser.CoreWebView2.OpenDefaultDownloadDialog(); });
-            ShellButton external = CreateButton("브라우저", ShellGlyph.External, false, delegate { OpenExternal(settings.Url, false); });
-            external.Margin = new Padding(0, 4, 0, 4);
-            external.AccessibleDescription = "Windows에 설정된 기본 브라우저에서 NAS 홈 주소를 엽니다.";
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
-            toolTips.SetToolTip(external, "Windows 기본 브라우저에서 열기");
             actions.Controls.Add(home, 0, 0);
             actions.Controls.Add(refresh, 1, 0);
             actions.Controls.Add(Address, 2, 0);
-            actions.Controls.Add(downloads, 3, 0);
-            actions.Controls.Add(external, 4, 0);
             top.Controls.Add(actions);
             top.Controls.Add(header);
             StatusStrip footer = new StatusStrip { BackColor = NasTheme.Background, ForeColor = NasTheme.Muted, SizingGrip = false, Padding = new Padding(20, 4, 20, 4) };
@@ -115,11 +112,11 @@ namespace NasDesk
             Label errorTitle = new Label { Text = "연결을 확인해 주세요", Font = new Font("Malgun Gothic", 20F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(36, 45) };
             errorText = new Label { AutoSize = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Location = new Point(38, 110), Size = new Size(620, 155), ForeColor = NasTheme.Muted, Font = new Font("Malgun Gothic", 10F), Text = "연결을 준비하고 있습니다." };
             ShellButton retry = new ShellButton { Text = "다시 연결", Glyph = ShellGlyph.Refresh, Primary = true, Width = 144, Height = 42, Location = new Point(38, 280) };
-            retry.Click += async delegate { if (Ready) NavigateHome(); else await InitializeAsync(null); };
+            retry.Click += async delegate { await ReconnectAsync(); };
             errorPanel.Controls.Add(retry);
             errorPanel.Controls.Add(errorText);
             errorPanel.Controls.Add(errorTitle);
-            Panel viewport = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Border, Padding = new Padding(1) };
+            viewport = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Border, Padding = new Padding(1) };
             Panel workspace = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Padding = new Padding(20, 0, 20, 0) };
             viewport.Controls.Add(Browser);
             viewport.Controls.Add(errorPanel);
@@ -161,13 +158,51 @@ namespace NasDesk
             connectionBadge.ForeColor = color;
         }
 
-        internal async Task InitializeAsync(CoreWebView2Environment sharedEnvironment)
+        private static WebView2 CreateBrowser()
+        {
+            return new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(24, 27, 32) };
+        }
+
+        internal Task InitializeAsync(CoreWebView2Environment sharedEnvironment)
+        {
+            if (Ready || IsDisposed || Disposing || exitRequested) return Task.FromResult(0);
+            if (initializationTask != null && !initializationTask.IsCompleted) return initializationTask;
+            initializationTask = InitializeBrowserAsync(sharedEnvironment);
+            return initializationTask;
+        }
+
+        private async Task InitializeBrowserAsync(CoreWebView2Environment sharedEnvironment)
         {
             if (Ready || IsDisposed || Disposing) return;
             try
             {
+                if (waitForBrowserExit && browserExitSignal != null)
+                {
+                    Task exited = browserExitSignal.Task;
+                    if (await Task.WhenAny(exited, Task.Delay(3000)) != exited)
+                    {
+                        ShowError("웹 엔진이 아직 종료 중입니다. 잠시 후 다시 연결을 눌러 주세요.");
+                        return;
+                    }
+                    waitForBrowserExit = false;
+                }
+                if (IsDisposed || Disposing || exitRequested) return;
+                if (browserNeedsRecreation)
+                {
+                    foreach (MainWindow child in children.ToArray()) child.RequestExit();
+                    viewport.Controls.Remove(Browser);
+                    Browser.Dispose();
+                    Browser = CreateBrowser();
+                    viewport.Controls.Add(Browser);
+                    errorPanel.BringToFront();
+                    environment = null;
+                    browserNeedsRecreation = false;
+                }
                 CoreWebView2Environment.GetAvailableBrowserVersionString();
-                environment = sharedEnvironment ?? await CoreWebView2Environment.CreateAsync(null, profilePath);
+                environment = sharedEnvironment ?? environment ?? await CoreWebView2Environment.CreateAsync(null, profilePath);
+                TaskCompletionSource<bool> exitedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                browserExitSignal = exitedSignal;
+                environment.BrowserProcessExited += delegate { exitedSignal.TrySetResult(true); };
                 if (IsDisposed || Disposing) return;
                 await Browser.EnsureCoreWebView2Async(environment);
                 if (IsDisposed || Disposing) return;
@@ -180,7 +215,9 @@ namespace NasDesk
                     if (!ConnectionSettings.IsInternal(e.Uri, settings.Url))
                     {
                         e.Cancel = true;
-                        status.Text = "다른 주소로의 이동이 차단됐습니다. 필요하면 ‘브라우저’를 사용하세요.";
+                        if (!e.IsUserInitiated)
+                            ShowError("다른 호스트·포트로 자동 전환되어 연결을 중단했습니다. 일반 브라우저에서 접속을 완료한 뒤의 직접 HTTPS 주소를 입력해 주세요. 이 앱은 QuickConnect 자동 주소 전환을 지원하지 않습니다.");
+                        else status.Text = "다른 호스트·포트로의 이동을 차단했습니다. 직접 HTTPS 주소를 입력해 주세요.";
                         return;
                     }
                     errorPanel.Visible = false;
@@ -191,6 +228,8 @@ namespace NasDesk
                 {
                     if (e.IsSuccess)
                     {
+                        if (ConnectionSettings.IsValid(core.Source) && ConnectionSettings.IsInternal(core.Source, settings.Url))
+                            lastLoadedUrl = core.Source;
                         errorPanel.Visible = false;
                         status.Text = "HTTPS · " + new Uri(settings.Url).Authority;
                         SetConnectionState("연결됨", NasTheme.Accent);
@@ -202,15 +241,10 @@ namespace NasDesk
                 core.WindowCloseRequested += delegate { if (popup) RequestExit(); };
                 core.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e)
                 {
-                    // Notifications are useful while resident; leave permission decisions in the web UI.
                     if (!ConnectionSettings.IsInternal(e.Uri, settings.Url)) e.State = CoreWebView2PermissionState.Deny;
                 };
                 core.LaunchingExternalUriScheme += delegate(object sender, CoreWebView2LaunchingExternalUriSchemeEventArgs e) { e.Cancel = true; };
-                core.ProcessFailed += delegate
-                {
-                    Ready = false;
-                    ShowError("웹 화면 프로세스가 중단됐습니다. 트레이 메뉴에서 완전 종료한 뒤 앱을 다시 실행하세요.");
-                };
+                core.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs e) { HandleProcessFailure(e.ProcessFailedKind); };
                 InitializationError = null;
                 Ready = true;
                 if (!popup)
@@ -222,8 +256,43 @@ namespace NasDesk
             catch (Exception error)
             {
                 if (IsDisposed || Disposing || exitRequested) return;
+                Ready = false;
+                browserNeedsRecreation = true;
                 InitializationError = error;
                 ShowError("웹 화면을 준비하지 못했습니다. Microsoft Edge WebView2 Runtime 설치 상태를 확인하세요.\n\n" + error.Message);
+            }
+        }
+
+        internal void HandleProcessFailure(CoreWebView2ProcessFailedKind kind)
+        {
+            if (IsDisposed || Disposing || exitRequested) return;
+            if (kind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+            {
+                Ready = false;
+                browserNeedsRecreation = true;
+                waitForBrowserExit = true;
+                ShowError("웹 엔진이 중단됐습니다. 다시 연결을 누르면 로그인 저장 공간을 유지하고 웹 화면을 새로 준비합니다.");
+            }
+            else if (kind == CoreWebView2ProcessFailedKind.RenderProcessExited)
+                ShowError("웹 화면이 중단됐습니다. 다시 연결을 누르면 NAS 화면을 다시 불러옵니다.");
+            else if (kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                status.Text = "웹 화면의 응답이 지연되고 있습니다. 기다리거나 새로 고침을 눌러 주세요.";
+            else if (kind == CoreWebView2ProcessFailedKind.FrameRenderProcessExited)
+                status.Text = "일부 웹 화면이 중단됐습니다. 필요하면 새로 고침을 눌러 주세요.";
+            // GPU, utility and other auxiliary processes are recovered by WebView2.
+        }
+
+        internal async Task ReconnectAsync()
+        {
+            if (IsDisposed || Disposing || exitRequested) return;
+            if (!Ready) await InitializeAsync(null);
+            else if (!popup) NavigateHome();
+            if (Ready && popup)
+            {
+                string target = ConnectionSettings.IsValid(lastLoadedUrl) && ConnectionSettings.IsInternal(lastLoadedUrl, settings.Url)
+                    ? lastLoadedUrl : settings.Url;
+                errorPanel.Visible = false;
+                Browser.CoreWebView2.Navigate(target);
             }
         }
 
