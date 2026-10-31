@@ -69,7 +69,7 @@ namespace NasDesk
             this.popup = popup;
             this.settingsPath = settingsPath;
             appliedPalette = NasTheme.Current;
-            connection = session ?? new ConnectionSession(settings.Url);
+            connection = session ?? new ConnectionSession(settings.Url, settings.Kind);
             Text = Program.AppName;
             Font = new Font("Malgun Gothic", 9F);
             Size = new Size(1320, 900);
@@ -88,7 +88,7 @@ namespace NasDesk
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
             Panel brand = new Panel { Dock = DockStyle.Fill };
             ShellLogo logo = new ShellLogo { Location = new Point(0, 18), Size = new Size(44, 44) };
-            Label brandTitle = new Label { Text = "Synology NAS", Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(56, 13) };
+            Label brandTitle = new Label { Text = Program.AppName, Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(56, 13) };
             Label brandSubtitle = new Label { Text = "D E S K T O P   W O R K S P A C E", Font = new Font("Segoe UI", 7.3F), ForeColor = NasTheme.Muted, AutoSize = true, Location = new Point(59, 48) };
             brand.Controls.AddRange(new Control[] { logo, brandTitle, brandSubtitle });
             Panel connectionPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 20, 0, 20) };
@@ -122,7 +122,7 @@ namespace NasDesk
             ShellButton refresh = CreateButton("새로 고침", ShellGlyph.Refresh, false, delegate { ReloadPage(); });
             refresh.Compact = true;
             Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4) };
-            Address.SetAddress(settings.Url);
+            Address.SetAddress(settings.Url, settings.Kind);
             Address.ConnectRequested += delegate { ApplyAddress(); };
             if (popup) Address.EditSwitch.Enabled = false;
             toolTips.SetToolTip(home, "NAS 홈");
@@ -367,7 +367,9 @@ namespace NasDesk
                     {
                         e.Cancel = true;
                         if (connection.CanVerify(e.Uri)) QueueQuickConnectNavigation(e.Uri);
-                        else if (!e.IsUserInitiated) ShowError("설정한 NAS와 관련 없는 주소로 이동하려 해 연결을 중단했습니다. QuickConnect ID 또는 NAS 주소를 확인해 주세요.");
+                        else if (!e.IsUserInitiated) ShowError(connection.IsQuickConnect
+                            ? "설정한 NAS와 관련 없는 주소로 이동하려 해 연결을 중단했습니다. QuickConnect ID 또는 NAS 주소를 확인해 주세요."
+                            : "다른 호스트 또는 포트로의 자동 이동을 중단했습니다. NAS의 최종 HTTPS 관리 주소를 입력해 주세요.");
                         else status.Text = "설정한 NAS와 관련 없는 주소로의 이동을 차단했습니다.";
                         return;
                     }
@@ -567,26 +569,29 @@ namespace NasDesk
         private void ApplyAddress()
         {
             string value = Address.AddressText.Trim();
-            ConnectionAddress parsed;
-            if (!ConnectionAddress.TryParse(value, out parsed))
+            ConnectionSettings candidate;
+            if (!ConnectionSettings.TryCreate(value, Address.Kind, out candidate))
             {
-                status.Text = "QuickConnect ID·주소 또는 HTTPS NAS 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
+                status.Text = Address.Kind == ConnectionKind.SynologyQuickConnect
+                    ? "Synology QuickConnect ID 또는 quickconnect.to/ID 주소를 입력하세요."
+                    : "NAS의 HTTPS 관리 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
                 Address.Input.Focus();
                 return;
             }
-            string address = parsed.Url;
+            string address = candidate.Url;
             try
             {
-                new ConnectionSettings { Url = address }.Save(settingsPath);
+                candidate.Save(settingsPath);
                 foreach (MainWindow child in children.ToArray()) child.RequestExit();
                 connection.Dispose();
-                connection = new ConnectionSession(address);
+                connection = new ConnectionSession(address, candidate.Kind);
                 pendingNavigationUrl = null;
                 navigationCheck = null;
                 navigationRequest++;
                 lastLoadedUrl = null;
                 settings.Url = address;
-                Address.SetAddress(address);
+                settings.Type = candidate.Type;
+                Address.SetAddress(address, candidate.Kind);
                 NavigateHome();
             }
             catch (Exception error) { status.Text = "주소를 저장하지 못했습니다: " + error.Message; }

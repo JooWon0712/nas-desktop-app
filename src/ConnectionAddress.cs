@@ -1,7 +1,11 @@
 using System;
+using System.Net;
+using System.Net.Sockets;
 
 namespace NasDesk
 {
+    internal enum ConnectionKind { DirectHttps, SynologyQuickConnect }
+
     internal sealed class ConnectionAddress
     {
         internal string Url { get; private set; }
@@ -15,6 +19,52 @@ namespace NasDesk
             QuickConnectDomain = domain;
         }
 
+        internal static bool TryParse(string input, ConnectionKind kind, out ConnectionAddress address)
+        {
+            address = null;
+            if (kind == ConnectionKind.SynologyQuickConnect)
+            {
+                ConnectionAddress legacy;
+                if (!TryParse(input, out legacy) || legacy.QuickConnectId == null) return false;
+                address = legacy;
+                return true;
+            }
+            if (kind != ConnectionKind.DirectHttps || String.IsNullOrEmpty(input)) return false;
+
+            string value = input;
+            if (value.IndexOf("://", StringComparison.Ordinal) < 0)
+            {
+                IPAddress ip;
+                if (IPAddress.TryParse(value, out ip) && ip.AddressFamily == AddressFamily.InterNetworkV6)
+                    value = "[" + value + "]";
+                value = "https://" + value;
+            }
+            Uri uri;
+            if (!TrySecureUri(value, out uri)) return false;
+            // The selected mode is authoritative, including for QuickConnect-looking hosts.
+            address = new ConnectionAddress(uri, null, null);
+            return true;
+        }
+
+        internal static bool TrySecureUri(string value, out Uri uri)
+        {
+            uri = null;
+            if (String.IsNullOrEmpty(value)) return false;
+            foreach (char character in value)
+                if (Char.IsWhiteSpace(character) || Char.IsControl(character) || character == '\\') return false;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || !uri.IsWellFormedOriginalString()
+                || uri.Scheme != Uri.UriSchemeHttps || String.IsNullOrEmpty(uri.Host)
+                || !String.IsNullOrEmpty(uri.UserInfo) || uri.HostNameType == UriHostNameType.Unknown
+                || uri.HostNameType == UriHostNameType.Basic) return false;
+            int start = value.IndexOf("://", StringComparison.Ordinal);
+            if (start < 0) return false;
+            start += 3;
+            int end = value.IndexOfAny(new[] { '/', '?', '#' }, start);
+            if (end < 0) end = value.Length;
+            return value.Substring(start, end - start).IndexOf('@') < 0;
+        }
+
+        // Used only to preserve the behavior of settings created before a connection type existed.
         internal static bool TryParse(string input, out ConnectionAddress address)
         {
             address = null;

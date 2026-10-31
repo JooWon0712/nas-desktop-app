@@ -23,6 +23,37 @@ namespace NasDesk
             check(!Accepts("https://user:secret@nas.example/") && !Accepts("https://@nas.example/") && !Accepts("https://a@b@nas.example/"), "All userinfo markers are rejected");
             check(!Accepts("demo nas") && !Accepts("demo\r\n") && !Accepts("demo_") && !Accepts("-demo")
                 && !Accepts("javascript:alert(1)") && !Accepts("file:///tmp/test") && !Accepts("data:text/plain,test"), "Malformed IDs, whitespace, controls and unsupported schemes are rejected");
+
+            check(Direct("nas", "https://nas/") && Direct("nas:8443/ui/#/login", "https://nas:8443/ui/#/login"),
+                "Direct HTTPS mode treats an unqualified NAS name as a local host rather than a QuickConnect ID");
+            check(Direct("qnap.local:443/cgi-bin/", "https://qnap.local/cgi-bin/")
+                && Direct("https://asustor.example:8001/portal/", "https://asustor.example:8001/portal/")
+                && Direct("https://truenas.example/ui/", "https://truenas.example/ui/"),
+                "Generic NAS HTTPS mode preserves manufacturer-independent ports and application routes");
+            check(Direct("192.0.2.10:9443/", "https://192.0.2.10:9443/")
+                && Direct("[2001:db8::10]:8443/ui/", "https://[2001:db8::10]:8443/ui/")
+                && Direct("2001:db8::10", "https://[2001:db8::10]/"),
+                "Direct mode supports explicit IPv4 and IPv6 NAS addresses");
+            check(Direct("https://demo-nas.quickconnect.to/", "https://demo-nas.quickconnect.to/")
+                && Direct("https://quickconnect.to/demo-nas/", "https://quickconnect.to/demo-nas/"),
+                "An explicitly direct QuickConnect-looking address never activates the QuickConnect resolver");
+            ConnectionAddress explicitQuickConnect;
+            check(ConnectionAddress.TryParse("Demo-Nas", ConnectionKind.SynologyQuickConnect, out explicitQuickConnect)
+                && explicitQuickConnect.Url == "https://demo-nas.quickconnect.to/"
+                && explicitQuickConnect.QuickConnectId == "demo-nas"
+                && !ExplicitAccepts("https://qnap.example/", ConnectionKind.SynologyQuickConnect)
+                && !ExplicitAccepts("https://device-alias.us2.quickconnect.to/", ConnectionKind.SynologyQuickConnect),
+                "Explicit Synology mode requires an actual QuickConnect ID or its bootstrap URL");
+            check(!ExplicitAccepts("http://nas.local/", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("http://demo-nas.quickconnect.to/", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("https://@nas.local/", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("https://user:secret@nas.local/", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("nas\\share", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("nas\r\n", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("javascript:alert(1)", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("file:///tmp/test", ConnectionKind.DirectHttps)
+                && !ExplicitAccepts("nas", (ConnectionKind)999),
+                "Explicit direct mode rejects HTTP, credentials, unsafe characters, unsupported schemes and invalid modes");
         }
 
         private static bool Parses(string value, string expectedUrl, string expectedId, string expectedDomain)
@@ -36,6 +67,19 @@ namespace NasDesk
         {
             ConnectionAddress address;
             return ConnectionAddress.TryParse(value, out address);
+        }
+
+        private static bool Direct(string value, string expectedUrl)
+        {
+            ConnectionAddress address;
+            return ConnectionAddress.TryParse(value, ConnectionKind.DirectHttps, out address)
+                && address.Url == expectedUrl && address.QuickConnectId == null && address.QuickConnectDomain == null;
+        }
+
+        private static bool ExplicitAccepts(string value, ConnectionKind kind)
+        {
+            ConnectionAddress address;
+            return ConnectionAddress.TryParse(value, kind, out address);
         }
     }
 }

@@ -8,6 +8,38 @@ namespace NasDesk
     {
         internal static async Task RunAsync(Action<bool, string> check)
         {
+            int explicitDirectVerifications = 0;
+            using (ConnectionSession local = new ConnectionSession("nas:8443/ui/", ConnectionKind.DirectHttps,
+                delegate(string target, CancellationToken cancellation)
+                {
+                    explicitDirectVerifications++;
+                    return Task.FromResult(true);
+                }))
+            {
+                check(!local.IsQuickConnect && local.Address.QuickConnectId == null
+                    && local.Allows("https://nas:8443/ui/login") && local.IsNasOrigin("https://nas:8443/")
+                    && !local.Allows("https://nas:9443/") && !local.Allows("https://nas.attacker.invalid:8443/")
+                    && !local.Allows("http://nas:8443/") && !local.Allows("https://@nas:8443/"),
+                    "An explicit local NAS connection preserves its exact HTTPS host and port boundary");
+                bool expanded = await local.VerifyAndAllowAsync("https://nas.quickconnect.to/");
+                check(!expanded && explicitDirectVerifications == 0,
+                    "Direct mode never sends an unqualified LAN name to the QuickConnect verifier");
+            }
+            using (ConnectionSession directPortal = new ConnectionSession("https://demo-nas.quickconnect.to/", ConnectionKind.DirectHttps))
+                check(!directPortal.IsQuickConnect && directPortal.IsNasOrigin("https://demo-nas.quickconnect.to/")
+                    && !directPortal.Allows("https://quickconnect.to/demo-nas/")
+                    && !directPortal.CanVerify("https://192.0.2.10:5001/"),
+                    "Explicit direct sessions are not reclassified from the canonical URL host");
+            using (ConnectionSession ipv6 = new ConnectionSession("[2001:db8::10]:8443/ui/", ConnectionKind.DirectHttps))
+                check(ipv6.Allows("https://[2001:db8::10]:8443/ui/login")
+                    && !ipv6.Allows("https://[2001:db8::11]:8443/") && !ipv6.Allows("https://[2001:db8::10]:9443/"),
+                    "IPv6 direct sessions keep the configured address and port boundary");
+            using (ConnectionSession explicitSynology = new ConnectionSession("demo-nas", ConnectionKind.SynologyQuickConnect,
+                (target, cancellation) => Task.FromResult(false)))
+                check(explicitSynology.IsQuickConnect && explicitSynology.Allows("https://demo-nas.quickconnect.to/")
+                    && !explicitSynology.IsNasOrigin("https://demo-nas.quickconnect.to/"),
+                    "Explicit Synology sessions preserve QuickConnect endpoint verification");
+
             int rejectedVerifications = 0;
             using (ConnectionSession session = new ConnectionSession("demo-nas", delegate(string target, CancellationToken cancellation)
             {

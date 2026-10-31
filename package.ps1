@@ -1,6 +1,6 @@
 param(
-    [string]$AppDirectory = 'dist\SynologyNasDesktop',
-    [string]$OutputFile = 'dist\SynologyNasDesktop-windows-x64.zip'
+    [string]$AppDirectory = 'dist\NasDesktop',
+    [string]$OutputFile = 'dist\NasDesktop-windows-x64.zip'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -12,7 +12,7 @@ if ([IO.Path]::GetExtension($archivePath) -ne '.zip') { throw 'OutputFile must h
 
 # Copy only the files required to run the app, even from a private development build.
 $allowedNames = @(
-    'SynologyNasDesktop.exe',
+    'NasDesktop.exe',
     'Microsoft.Web.WebView2.Core.dll',
     'Microsoft.Web.WebView2.WinForms.dll',
     'WebView2Loader.dll'

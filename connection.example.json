@@ -1,3 +1,4 @@
 {
-  "Url": "https://your-nas.example.com:5001/"
+  "Url": "https://your-nas.example.com/",
+  "Type": "https"
 }

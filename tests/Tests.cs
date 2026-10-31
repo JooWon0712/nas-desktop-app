@@ -58,6 +58,7 @@ namespace NasDesk
         private static void UnitTests()
         {
             ConnectionAddressTests.Run(Check);
+            ConnectionSettingsTests.Run(output, Check);
             QuickConnectResolverTests.Run(Check);
             AppearanceSettingsTests.Run(output, Check);
             ThemeModeTests.Run(Check);
@@ -124,6 +125,7 @@ namespace NasDesk
             await WaitFor(() => blocked, 5000, "External navigation blocked before request");
             Check(blocked, "Unconfigured origin blocked");
             await QuickConnectBrowserTests.RunAsync(output, fixture, Check);
+            await GenericNasBrowserTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
@@ -267,22 +269,27 @@ namespace NasDesk
             window.PerformLayout();
             string originalSettings = File.ReadAllText(uiSettingsPath);
             string originalPage = core.Source;
-            Check(!address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
+            Check(!address.IsEditing && address.Input.ReadOnly && !address.TypePicker.Enabled
+                && address.Kind == ConnectionKind.DirectHttps && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
                 "Address starts read-only with connection action disabled");
 
             address.IsEditing = true;
-            Check(!address.Input.ReadOnly && address.ConnectButton.Enabled, "Address edit ON enables input and connection");
+            Check(!address.Input.ReadOnly && address.TypePicker.Enabled && address.ConnectButton.Enabled, "Address edit ON enables input, connection type and connection");
             address.AddressText = "https://uncommitted.test/";
+            address.Kind = ConnectionKind.SynologyQuickConnect;
             address.IsEditing = false;
-            Check(address.Input.ReadOnly && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
-                "Address edit OFF discards draft without saving or navigating");
+            Check(address.Input.ReadOnly && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
+                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
+                "Address edit OFF discards draft address and type without saving or navigating");
 
             address.IsEditing = true;
             address.AddressText = "https://cancelled.test/";
+            address.Kind = ConnectionKind.SynologyQuickConnect;
             Message escape = Message.Create(address.Input.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
             bool escapeHandled = address.PreProcessMessage(ref escape);
-            Check(escapeHandled && !address.IsEditing && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings,
-                "Local Escape command cancels address edit without global key input");
+            Check(escapeHandled && !address.IsEditing && address.Kind == ConnectionKind.DirectHttps
+                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings,
+                "Local Escape command cancels both address and connection type");
 
             address.IsEditing = true;
             address.AddressText = "http://nas-desk-alternate.test/index.html";
@@ -308,11 +315,31 @@ namespace NasDesk
                 address.ConnectButton.PerformClick();
                 await WaitFor(() => alternateLoaded, 10000, "Updated NAS address loads its new HTTPS origin");
                 Check(ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
+                    && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
                     && !address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled
                     && core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture",
                     "Valid address submission saves isolated settings, locks editor and loads new HTTPS origin");
             }
             finally { core.NavigationCompleted -= navigated; }
+
+            const string quickConnectUrl = "https://ui-type-fixture.quickconnect.to/index.html";
+            core.SetVirtualHostNameToFolderMapping("ui-type-fixture.quickconnect.to", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
+            address.IsEditing = true;
+            address.Kind = ConnectionKind.SynologyQuickConnect;
+            address.AddressText = quickConnectUrl;
+            address.ConnectButton.PerformClick();
+            await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Explicit QuickConnect type fixture");
+            Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
+                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing,
+                "Connection editor applies and saves an explicitly selected QuickConnect type");
+            address.IsEditing = true;
+            address.Kind = ConnectionKind.DirectHttps;
+            address.AddressText = alternateUrl;
+            address.ConnectButton.PerformClick();
+            await WaitFor(() => core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Return to direct HTTPS fixture");
+            Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
+                && address.Kind == ConnectionKind.DirectHttps,
+                "Switching from QuickConnect back to a generic HTTPS NAS replaces the saved type");
         }
     }
 }

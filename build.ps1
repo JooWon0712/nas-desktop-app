@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDirectory = 'dist\SynologyNasDesktop',
+    [string]$OutputDirectory = 'dist\NasDesktop',
     [switch]$IncludeLocalSettings
 )
 $ErrorActionPreference = 'Stop'
@@ -40,7 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed.' }
 $references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll')
 $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'
 $references += Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'
-$arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',"/out:$(Join-Path $output 'SynologyNasDesktop.exe')", "/win32icon:$icon", "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')")
+$arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',"/out:$(Join-Path $output 'NasDesktop.exe')", "/win32icon:$icon", "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')")
 $arguments += $references | ForEach-Object { "/reference:$_" }
 $arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*.cs' | ForEach-Object FullName
 & $compiler @arguments
@@ -61,4 +61,4 @@ elseif (Test-Path -LiteralPath $localSettingsOutput) {
     }
     Remove-Item -LiteralPath $localSettingsOutput -Force
 }
-Write-Output "Built: $(Join-Path $output 'SynologyNasDesktop.exe')"
+Write-Output "Built: $(Join-Path $output 'NasDesktop.exe')"

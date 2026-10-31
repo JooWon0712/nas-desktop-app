@@ -60,7 +60,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
     $actualNames = @($archive.Entries | ForEach-Object FullName | Sort-Object)
-    $expectedNames = @('SynologyNasDesktop.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll' | Sort-Object)
+    $expectedNames = @('NasDesktop.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll' | Sort-Object)
     Assert-Check (($actualNames.Count -eq 4) -and (($actualNames -join '|') -eq ($expectedNames -join '|'))) 'Public ZIP contains only the executable and required three DLLs'
     Assert-Check (-not ($actualNames | Where-Object { $_ -match 'connection|cookie|profile|extra' })) 'Private settings, browser data and unapproved files are excluded'
 }

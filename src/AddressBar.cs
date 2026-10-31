@@ -8,8 +8,10 @@ namespace NasDesk
     internal sealed class AddressBar : UserControl
     {
         private string committedUrl = String.Empty;
+        private ConnectionKind committedKind = ConnectionKind.DirectHttps;
         private readonly Panel inputFrame;
         internal readonly TextBox Input;
+        internal readonly ConnectionTypePicker TypePicker;
         internal readonly CheckBox EditSwitch;
         internal readonly ShellButton ConnectButton;
         internal event EventHandler ConnectRequested;
@@ -24,6 +26,12 @@ namespace NasDesk
         {
             get { return EditSwitch.Checked; }
             set { EditSwitch.Checked = value; }
+        }
+
+        internal ConnectionKind Kind
+        {
+            get { return TypePicker.Kind; }
+            set { TypePicker.Kind = value; }
         }
 
         internal AddressBar()
@@ -55,7 +63,9 @@ namespace NasDesk
                     e.Graphics.DrawPath(pen, border);
                 }
             };
-            Input = new TextBox { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 0 };
+            TypePicker = new ConnectionTypePicker { Enabled = false, TabIndex = 0 };
+            Input = new TextBox { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 1 };
+            inputFrame.Controls.Add(TypePicker);
             inputFrame.Controls.Add(Input);
             inputFrame.Resize += delegate { LayoutInput(); };
             Input.FontChanged += delegate { LayoutInput(); };
@@ -73,9 +83,14 @@ namespace NasDesk
 
         private void LayoutInput()
         {
-            if (Input == null) return;
-            Input.Size = new Size(Math.Max(1, inputFrame.ClientSize.Width - inputFrame.Padding.Horizontal), Input.PreferredHeight);
-            Input.Location = new Point(inputFrame.Padding.Left, Math.Max(0, (inputFrame.ClientSize.Height - Input.Height) / 2));
+            if (Input == null || TypePicker == null) return;
+            float scale = CurrentAutoScaleDimensions.Width / 96F;
+            int top = (int)Math.Round(3F * scale);
+            TypePicker.Bounds = new Rectangle((int)Math.Round(5F * scale), top,
+                (int)Math.Round(128F * scale), Math.Max(1, inputFrame.ClientSize.Height - top * 2));
+            int left = TypePicker.Right + inputFrame.Padding.Left;
+            Input.Size = new Size(Math.Max(1, inputFrame.ClientSize.Width - left - inputFrame.Padding.Right), Input.PreferredHeight);
+            Input.Location = new Point(left, Math.Max(0, (inputFrame.ClientSize.Height - Input.Height) / 2));
         }
 
         protected override void OnLayout(LayoutEventArgs e)
@@ -89,16 +104,24 @@ namespace NasDesk
             Input.ReadOnly = !IsEditing;
             Input.ForeColor = IsEditing ? NasTheme.Text : NasTheme.Muted;
             ConnectButton.Enabled = IsEditing;
+            TypePicker.Enabled = IsEditing;
             if (IsEditing) { Input.Focus(); Input.SelectAll(); }
-            else Input.Text = committedUrl;
+            else { Input.Text = committedUrl; TypePicker.Kind = committedKind; }
             inputFrame.Invalidate();
         }
 
         internal void SetAddress(string value)
         {
+            SetAddress(value, Kind);
+        }
+
+        internal void SetAddress(string value, ConnectionKind kind)
+        {
             committedUrl = value ?? String.Empty;
+            committedKind = kind;
             EditSwitch.Checked = false;
             Input.Text = committedUrl;
+            TypePicker.Kind = committedKind;
             ApplyEditing();
         }
 
@@ -108,6 +131,9 @@ namespace NasDesk
             inputFrame.BackColor = NasTheme.Background;
             Input.BackColor = NasTheme.Surface;
             Input.ForeColor = IsEditing ? NasTheme.Text : NasTheme.Muted;
+            TypePicker.BackColor = NasTheme.Surface;
+            TypePicker.ForeColor = NasTheme.Text;
+            TypePicker.Invalidate();
             EditSwitch.BackColor = NasTheme.Background;
             EditSwitch.ForeColor = NasTheme.Text;
             ConnectButton.BackColor = NasTheme.Surface;

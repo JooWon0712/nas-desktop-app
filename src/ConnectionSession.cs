@@ -17,9 +17,13 @@ namespace NasDesk
         internal bool IsQuickConnect { get { return Address.QuickConnectId != null; } }
 
         internal ConnectionSession(string home, Func<string, CancellationToken, Task<bool>> verifier = null)
+            : this(ParseAddress(home), verifier) { }
+
+        internal ConnectionSession(string home, ConnectionKind kind, Func<string, CancellationToken, Task<bool>> verifier = null)
+            : this(ParseAddress(home, kind), verifier) { }
+
+        private ConnectionSession(ConnectionAddress address, Func<string, CancellationToken, Task<bool>> verifier)
         {
-            ConnectionAddress address;
-            if (!ConnectionAddress.TryParse(home, out address)) throw new ArgumentException("Invalid NAS address.", "home");
             Address = address;
             token = lifetime.Token;
             if (IsQuickConnect)
@@ -28,6 +32,20 @@ namespace NasDesk
                 verify = verifier ?? resolver.VerifyEndpointAsync;
             }
             else verifiedOrigins.Add(Origin(new Uri(Address.Url)));
+        }
+
+        private static ConnectionAddress ParseAddress(string home)
+        {
+            ConnectionAddress address;
+            if (!ConnectionAddress.TryParse(home, out address)) throw new ArgumentException("Invalid NAS address.", "home");
+            return address;
+        }
+
+        private static ConnectionAddress ParseAddress(string home, ConnectionKind kind)
+        {
+            ConnectionAddress address;
+            if (!ConnectionAddress.TryParse(home, kind, out address)) throw new ArgumentException("Invalid NAS address.", "home");
+            return address;
         }
 
         internal bool Allows(string value)
@@ -103,16 +121,7 @@ namespace NasDesk
 
         private static bool TrySecureUri(string value, out Uri uri)
         {
-            uri = null;
-            if (value == null) return false;
-            foreach (char character in value)
-                if (Char.IsWhiteSpace(character) || Char.IsControl(character) || character == '\\') return false;
-            if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps
-                || String.IsNullOrEmpty(uri.Host) || !String.IsNullOrEmpty(uri.UserInfo)) return false;
-            int start = value.IndexOf("://", StringComparison.Ordinal) + 3;
-            int end = value.IndexOfAny(new[] { '/', '?', '#' }, start);
-            if (end < 0) end = value.Length;
-            return value.Substring(start, end - start).IndexOf('@') < 0;
+            return ConnectionAddress.TrySecureUri(value, out uri);
         }
 
         private static string Origin(Uri uri) { return uri.GetLeftPart(UriPartial.Authority); }

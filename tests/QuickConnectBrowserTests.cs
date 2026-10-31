@@ -101,6 +101,7 @@ namespace NasDesk
                 check(core.Source == endpoint, "Pending endpoint verification cannot navigate before approval");
 
                 window.Address.IsEditing = true;
+                window.Address.Kind = ConnectionKind.DirectHttps;
                 window.Address.AddressText = replacement;
                 window.Address.ConnectButton.PerformClick();
                 await WaitFor(() => core.Source == replacement && core.DocumentTitle == "Replacement NAS fixture", "Address editor replaces the connection during verification");
