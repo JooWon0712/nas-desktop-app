@@ -21,6 +21,10 @@ namespace NasDesk
         private bool applyingAddress;
         internal event EventHandler ConnectRequested;
         internal event EventHandler HistoryRequested;
+        internal event EventHandler SuggestionsRequested;
+        internal event EventHandler EditingChanged;
+        internal Func<Keys, bool> HistoryKeyHandler { get; set; }
+        internal Control HistoryAnchor { get { return inputFrame; } }
 
         internal string AddressText
         {
@@ -78,11 +82,20 @@ namespace NasDesk
             };
             inputFrame.MouseDown += delegate(object sender, MouseEventArgs e)
             {
-                if (e.Button == MouseButtons.Left) BeginEditing(true, true);
+                if (e.Button == MouseButtons.Left) { BeginEditing(true, true); RequestSuggestions(); }
             };
             TypePicker = new ConnectionTypePicker { TabIndex = 0 };
             Input = new AddressInput { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 1 };
             Input.EditRequested += delegate { BeginEditing(false, true); };
+            Input.MouseClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) RequestSuggestions(); };
+            Input.KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (IsEditing && HistoryKeyHandler != null && HistoryKeyHandler(e.KeyData))
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            };
             TypePicker.EditRequested += delegate { BeginEditing(false, false); };
             inputFrame.Controls.Add(TypePicker);
             inputFrame.Controls.Add(Input);
@@ -145,6 +158,7 @@ namespace NasDesk
             {
                 editing = true;
                 UpdateEditingControls();
+                OnEditingChanged();
             }
             if (focusInput) Input.Focus();
             if (selectAll) Input.SelectAll();
@@ -174,6 +188,7 @@ namespace NasDesk
 
         private void RestoreCommittedAddress()
         {
+            bool wasEditing = editing;
             applyingAddress = true;
             try
             {
@@ -184,6 +199,7 @@ namespace NasDesk
                 UpdateEditingControls();
             }
             finally { applyingAddress = false; }
+            if (wasEditing) OnEditingChanged();
         }
 
         internal void SetAddress(string value)
@@ -223,8 +239,22 @@ namespace NasDesk
             if (handler != null) handler(this, EventArgs.Empty);
         }
 
+        private void RequestSuggestions()
+        {
+            if (!IsEditing || !EditingEnabled) return;
+            EventHandler handler = SuggestionsRequested;
+            if (handler != null) handler(this, EventArgs.Empty);
+        }
+
+        private void OnEditingChanged()
+        {
+            EventHandler handler = EditingChanged;
+            if (handler != null) handler(this, EventArgs.Empty);
+        }
+
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)
         {
+            if (IsEditing && Input.ContainsFocus && HistoryKeyHandler != null && HistoryKeyHandler(keyData)) return true;
             if (keyData == (Keys.Control | Keys.L) && EditingEnabled) { IsEditing = true; return true; }
             if (keyData == Keys.Escape && IsEditing) { IsEditing = false; return true; }
             if (keyData == Keys.Enter && IsEditing && Input.ContainsFocus) { RequestConnection(); return true; }

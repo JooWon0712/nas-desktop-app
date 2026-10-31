@@ -28,6 +28,8 @@ namespace NasDesk
         internal readonly AddressBar Address;
         private readonly string settingsPath;
         private readonly AddressHistoryStore historyStore;
+        private AddressHistoryPopup addressSuggestions;
+        internal AddressHistoryPopup AddressSuggestions { get { return addressSuggestions; } }
         private string historyWarning;
         private readonly ConnectionFailureView errorPanel;
         private bool failureShown;
@@ -131,6 +133,13 @@ namespace NasDesk
             Address.SetAddress(settings.Url, settings.Kind);
             Address.ConnectRequested += delegate { ApplyAddress(); };
             Address.HistoryRequested += delegate { ShowAddressHistory(); };
+            Address.SuggestionsRequested += delegate { ShowAddressSuggestions(); };
+            Address.EditingChanged += delegate { if (!Address.IsEditing) DismissAddressSuggestions(); };
+            Address.Input.TextChanged += delegate { DismissAddressSuggestions(); };
+            Address.Input.Leave += delegate { DismissAddressSuggestions(); };
+            Address.TypePicker.KindChanged += delegate { DismissAddressSuggestions(); };
+            Address.TypePicker.EditRequested += delegate { DismissAddressSuggestions(); };
+            Address.HistoryKeyHandler = HandleHistoryEditorKey;
             if (popup) Address.EditingEnabled = false;
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
@@ -348,6 +357,7 @@ namespace NasDesk
                 if (!ConnectionSettings.TryCreate(candidate.Url, candidate.Kind, out normalized)) return false;
             }
             catch (System.IO.InvalidDataException) { return false; }
+            DismissAddressSuggestions();
             Address.IsEditing = true;
             Address.Kind = normalized.Kind;
             Address.AddressText = normalized.Url;
@@ -360,6 +370,7 @@ namespace NasDesk
         private void ShowAddressHistory()
         {
             if (popup || !Address.EditingEnabled || exitRequested) return;
+            DismissAddressSuggestions();
             ConnectionSettings initial = settings;
             ConnectionSettings draft;
             if (Address.IsEditing && ConnectionSettings.TryCreate(Address.AddressText, Address.Kind, out draft)) initial = draft;
@@ -367,8 +378,61 @@ namespace NasDesk
                 if (dialog.ShowDialog(this) == DialogResult.OK) UseHistoryAddress(dialog.SelectedConnection);
         }
 
+        internal void ShowAddressSuggestions()
+        {
+            if (popup || !Address.EditingEnabled || !Address.IsEditing || exitRequested || IsDisposed || Disposing) return;
+            if (addressSuggestions != null && !addressSuggestions.IsDisposed) return;
+            IList<AddressHistoryEntry> entries;
+            string errorMessage = null;
+            try { entries = historyStore.ReadEntries(); }
+            catch (Exception)
+            {
+                entries = new List<AddressHistoryEntry>();
+                errorMessage = "주소 기록을 읽지 못했습니다. 주소 기록 관리에서 확인해 주세요.";
+            }
+            AddressHistoryPopup chooser = new AddressHistoryPopup(entries);
+            if (errorMessage != null) chooser.EmptyMessage = errorMessage;
+            addressSuggestions = chooser;
+            chooser.EntryChosen += delegate
+            {
+                AddressHistoryEntry selected = chooser.SelectedEntry;
+                if (selected != null) UseHistoryAddress(selected.Connection);
+            };
+            chooser.ManageRequested += delegate
+            {
+                DismissAddressSuggestions();
+                try { BeginInvoke((Action)ShowAddressHistory); }
+                catch (InvalidOperationException) { }
+            };
+            chooser.FormClosed += delegate { if (Object.ReferenceEquals(addressSuggestions, chooser)) addressSuggestions = null; };
+            chooser.ShowFor(Address.HistoryAnchor);
+        }
+
+        private bool HandleHistoryEditorKey(Keys keyData)
+        {
+            if (popup || !Address.IsEditing || !Address.EditingEnabled || !Address.Input.ContainsFocus) return false;
+            if (keyData == Keys.Down || keyData == Keys.Up)
+            {
+                ShowAddressSuggestions();
+                return addressSuggestions != null && addressSuggestions.HandleEditorKey(keyData);
+            }
+            return addressSuggestions != null && addressSuggestions.HandleEditorKey(keyData);
+        }
+
+        private void DismissAddressSuggestions()
+        {
+            AddressHistoryPopup chooser = addressSuggestions;
+            addressSuggestions = null;
+            if (chooser != null && !chooser.IsDisposed) chooser.Dismiss();
+        }
+
+        protected override void OnLocationChanged(EventArgs e) { DismissAddressSuggestions(); base.OnLocationChanged(e); }
+        protected override void OnResize(EventArgs e) { DismissAddressSuggestions(); base.OnResize(e); }
+        protected override void OnDeactivate(EventArgs e) { DismissAddressSuggestions(); base.OnDeactivate(e); }
+
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)
         {
+            if (HandleHistoryEditorKey(keyData)) return true;
             if (keyData == (Keys.Control | Keys.L) && !popup && Address.EditingEnabled)
             {
                 OpenAddressEditor();
@@ -697,6 +761,7 @@ namespace NasDesk
 
         private async void ApplyAddress()
         {
+            DismissAddressSuggestions();
             string value = Address.AddressText.Trim();
             ConnectionSettings candidate;
             if (!ConnectionSettings.TryCreate(value, Address.Kind, out candidate))
@@ -746,6 +811,7 @@ namespace NasDesk
 
         internal void HideToTray()
         {
+            DismissAddressSuggestions();
             if (!TrayVisible) return;
             foreach (MainWindow child in children)
             {
@@ -812,6 +878,7 @@ namespace NasDesk
         {
             if (disposing)
             {
+                DismissAddressSuggestions();
                 NasTheme.Changed -= OnThemeChanged;
                 themeMenu.Dispose();
                 if (!popup) connection.Dispose();

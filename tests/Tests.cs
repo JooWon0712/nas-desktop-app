@@ -65,6 +65,7 @@ namespace NasDesk
             ConnectionFailureInfoTests.Run(Check);
             AddressHistoryStoreTests.Run(output, Check);
             AddressHistoryDialogTests.Run(output, Check);
+            AddressHistoryPopupTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -137,6 +138,7 @@ namespace NasDesk
             await BrowserScrollbarTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
             await AddressAutoEditTests.RunAsync(window, core, uiSettingsPath, Check);
+            await AddressSuggestionsBrowserTests.RunAsync(window, core, uiSettingsPath, Check);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
