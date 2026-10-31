@@ -101,10 +101,16 @@ try {
         [IO.Directory]::Delete($linkedOutput)
     }
 
-    # Deliberately contaminate the folder. Public packaging must still include only four files.
+    # Deliberately contaminate the folder, including notice names that must come only from the repository.
     Copy-Item -LiteralPath $fixturePrivateSettings -Destination $fixtureOutput
     Set-Content -LiteralPath (Join-Path $fixtureOutput 'address-history.json') -Encoding Ascii -Value '{"Entries":[{"Url":"https://private-history-fixture.invalid/","Type":"https"}]}'
     Set-Content -LiteralPath (Join-Path $fixtureOutput 'extra.dll') -Value 'not part of the app'
+    $privateNoticeHashes = @{}
+    foreach ($noticeName in @('LICENSE','THIRD_PARTY_NOTICES.txt')) {
+        $privateNoticePath = Join-Path $fixtureOutput $noticeName
+        Set-Content -LiteralPath $privateNoticePath -Encoding Ascii -Value ('private build-folder notice lookalike: https://private-notice-fixture.invalid/' + $noticeName)
+        $privateNoticeHashes[$noticeName] = (Get-FileHash -LiteralPath $privateNoticePath -Algorithm SHA256).Hash
+    }
     New-Item -ItemType Directory -Path (Join-Path $fixtureOutput 'WebView2\Default') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $fixtureOutput 'WebView2\Default\Cookies') -Value 'fake cookie data'
     $archivePath = Join-Path $testRoot 'public.zip'
@@ -113,9 +119,18 @@ try {
     $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
     try {
         $actualNames = @($archive.Entries | ForEach-Object FullName | Sort-Object)
-        $expectedNames = @('NasDesktop.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll' | Sort-Object)
-        Assert-Check (($actualNames.Count -eq 4) -and (($actualNames -join '|') -eq ($expectedNames -join '|'))) 'Public ZIP contains only the executable and required three DLLs'
+        $expectedNames = @('NasDesktop.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','LICENSE','THIRD_PARTY_NOTICES.txt' | Sort-Object)
+        Assert-Check (($actualNames.Count -eq 6) -and (($actualNames -join '|') -eq ($expectedNames -join '|'))) 'Public ZIP contains only the four runtime files and two public license notices'
         Assert-Check (-not ($actualNames | Where-Object { $_ -match 'connection|history|cookie|profile|extra' })) 'Private settings, address history, browser data and unapproved files are excluded'
+        $repositoryNoticesIncluded = $true
+        foreach ($noticeName in @('LICENSE','THIRD_PARTY_NOTICES.txt')) {
+            $stream = $archive.GetEntry($noticeName).Open()
+            $algorithm = [Security.Cryptography.SHA256]::Create()
+            try { $noticeHash = [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '') }
+            finally { $algorithm.Dispose(); $stream.Dispose() }
+            if ($noticeHash -cne (Get-FileHash -LiteralPath (Join-Path $projectRoot $noticeName) -Algorithm SHA256).Hash -or $noticeHash -ceq $privateNoticeHashes[$noticeName]) { $repositoryNoticesIncluded = $false }
+        }
+        Assert-Check $repositoryNoticesIncluded 'Packaged license notices exactly match the repository and exclude private build-folder lookalikes'
     }
     finally { $archive.Dispose() }
 
@@ -129,6 +144,11 @@ try {
     Assert-Check (-not (Get-ChildItem -LiteralPath $testRoot -Filter 'SHA256SUMS.*.tmp')) 'Repeated packaging leaves no temporary checksum file'
     Assert-Check (-not (Get-ChildItem -LiteralPath $testRoot -Directory -Filter '.package-staging-*')) 'Temporary package staging is removed'
     Assert-Check ((Test-Path -LiteralPath (Join-Path $fixtureOutput 'connection.local.json')) -and (Test-Path -LiteralPath (Join-Path $fixtureOutput 'address-history.json'))) 'Packaging leaves private source settings and address history untouched'
+    $privateNoticesPreserved = $true
+    foreach ($noticeName in $privateNoticeHashes.Keys) {
+        if ((Get-FileHash -LiteralPath (Join-Path $fixtureOutput $noticeName) -Algorithm SHA256).Hash -cne $privateNoticeHashes[$noticeName]) { $privateNoticesPreserved = $false }
+    }
+    Assert-Check $privateNoticesPreserved 'Packaging leaves private build-folder notice lookalikes unchanged'
 }
 finally {
     try {

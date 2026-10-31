@@ -96,7 +96,7 @@ $actualHash -eq $expectedHash
 
 v0.15.0부터 공개 릴리스는 GitHub Actions에서 EXE와 ZIP을 빌드하고, **ZIP 및 그 안의 `NasDesktop.exe`를 함께 기록한 출처 증명**을 제공합니다. 증명은 파일 해시와 소스 저장소·커밋·워크플로의 관계를 확인하는 수단입니다. 로컬에서 따로 만든 파일이나 이전 공개 릴리스에 같은 증명이 적용됐다고 보장하지 않습니다. Windows Authenticode 코드 서명이나 앱의 무결점·무해함을 보장하는 보안 인증은 아닙니다.
 
-ZIP과 함께 `NasDesktop-windows-x64.sigstore.json`을 내려받고, ZIP의 네 파일을 같은 폴더로 압축 해제한 뒤 GitHub CLI로 각각 확인할 수 있습니다.
+ZIP과 함께 `NasDesktop-windows-x64.sigstore.json`을 내려받고, ZIP 내용 전체를 같은 폴더로 압축 해제한 뒤 GitHub CLI로 각각 확인할 수 있습니다.
 
 ```powershell
 gh attestation verify .\NasDesktop-windows-x64.zip -R JooWon0712/nas-desktop-app --bundle .\NasDesktop-windows-x64.sigstore.json --signer-workflow JooWon0712/nas-desktop-app/.github/workflows/build.yml --deny-self-hosted-runners

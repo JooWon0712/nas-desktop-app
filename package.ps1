@@ -23,18 +23,22 @@ function Assert-UnlinkedPackagePath([string]$Path) {
 Assert-UnlinkedPackagePath $appPath
 Assert-UnlinkedPackagePath $archivePath
 
-# Copy only the files required to run the app, even from a private development build.
-$allowedNames = @(
+# Keep runtime files separate from notices so private build-folder lookalikes cannot be published.
+$applicationNames = @(
     'NasDesktop.exe',
     'Microsoft.Web.WebView2.Core.dll',
     'Microsoft.Web.WebView2.WinForms.dll',
     'WebView2Loader.dll'
 )
-$sourceFiles = @($allowedNames | ForEach-Object {
-    $sourcePath = Join-Path $appPath $_
-    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Required app file is missing: $_" }
+$noticeNames = @('LICENSE','THIRD_PARTY_NOTICES.txt')
+$allowedNames = $applicationNames + $noticeNames
+$sourceFiles = @(foreach ($name in $allowedNames) {
+    $sourceRoot = if ($noticeNames -ccontains $name) { $PSScriptRoot } else { $appPath }
+    $sourcePath = Join-Path $sourceRoot $name
+    Assert-UnlinkedPackagePath $sourcePath
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Required package file is missing: $name" }
     $sourceItem = Get-Item -LiteralPath $sourcePath
-    if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "App files must not be links: $_" }
+    if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Package files must not be links: $name" }
     $sourceItem.FullName
 })
 
