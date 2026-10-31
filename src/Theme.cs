@@ -1,11 +1,15 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace NasDesk
 {
+    internal enum ThemeMode { System, Light, Dark }
+
     internal sealed class ThemePalette
     {
         internal string Key { get; private set; }
@@ -46,7 +50,7 @@ namespace NasDesk
 
     internal static class NasTheme
     {
-        private static readonly ThemePalette[] palettes = new ThemePalette[]
+        private static readonly ThemePalette[] darkPalettes = new ThemePalette[]
         {
             new ThemePalette("charcoal-blue", "차콜 블루",
                 Rgb(0x121419), Rgb(0x1B1E25), Rgb(0x303540), Rgb(0xF0F3F9),
@@ -73,12 +77,43 @@ namespace NasDesk
                 Rgb(0x8E9BAA), Rgb(0x59D6B0), Rgb(0x253140), Rgb(0x2D3C4C),
                 Rgb(0x59D6B0), Rgb(0xF0C284), Rgb(0xF2919A), Rgb(0x10251E))
         };
-        private static ThemePalette current = palettes[0];
+        private static readonly ThemePalette[] lightPalettes = new ThemePalette[]
+        {
+            new ThemePalette("charcoal-blue", "차콜 블루",
+                Rgb(0xF2F5FA), Rgb(0xFFFFFF), Rgb(0xCBD5E3), Rgb(0x1D2938),
+                Rgb(0x566579), Rgb(0x285EB0), Rgb(0xE5ECF6), Rgb(0xD7E2F2),
+                Rgb(0x285EB0), Rgb(0x8A5700), Rgb(0xB13A49), Rgb(0xFFFFFF)),
+            new ThemePalette("violet", "그래파이트 바이올렛",
+                Rgb(0xF6F3FA), Rgb(0xFFFFFF), Rgb(0xD9CFE5), Rgb(0x2B2235),
+                Rgb(0x65566F), Rgb(0x7044A5), Rgb(0xEDE5F5), Rgb(0xE2D5EF),
+                Rgb(0x7044A5), Rgb(0x875500), Rgb(0xB13A59), Rgb(0xFFFFFF)),
+            new ThemePalette("amber", "웜 앰버",
+                Rgb(0xF8F4EF), Rgb(0xFFFFFF), Rgb(0xDFD2C1), Rgb(0x33271D),
+                Rgb(0x705D49), Rgb(0x8C4E10), Rgb(0xF0E6DA), Rgb(0xE7D7C2),
+                Rgb(0x8C4E10), Rgb(0x795300), Rgb(0xAE3D34), Rgb(0xFFFFFF)),
+            new ThemePalette("forest", "포레스트 그린",
+                Rgb(0xF1F6F1), Rgb(0xFFFFFF), Rgb(0xC9D9CC), Rgb(0x203025),
+                Rgb(0x526653), Rgb(0x286B3A), Rgb(0xE3EEE4), Rgb(0xD4E4D7),
+                Rgb(0x286B3A), Rgb(0x805500), Rgb(0xAF3E45), Rgb(0xFFFFFF)),
+            new ThemePalette("sage", "세이지 올리브",
+                Rgb(0xF5F6EF), Rgb(0xFFFFFF), Rgb(0xD4DBC6), Rgb(0x2B3222),
+                Rgb(0x626C50), Rgb(0x526C2F), Rgb(0xE9EDDD), Rgb(0xDDE4CB),
+                Rgb(0x526C2F), Rgb(0x805500), Rgb(0xAF4438), Rgb(0xFFFFFF)),
+            new ThemePalette("mint", "네이비 민트",
+                Rgb(0xF0F7F5), Rgb(0xFFFFFF), Rgb(0xC9DDD6), Rgb(0x1F312C),
+                Rgb(0x506A60), Rgb(0x106B52), Rgb(0xE1F0EB), Rgb(0xD1E5DD),
+                Rgb(0x106B52), Rgb(0x805500), Rgb(0xAF3E45), Rgb(0xFFFFFF))
+        };
+        private static ThemePalette current = darkPalettes[0];
+        private static ThemeMode mode = ThemeMode.Dark;
+        private static bool isDark = true;
 
         internal static event EventHandler Changed;
 
-        internal static ThemePalette[] Palettes { get { return (ThemePalette[])palettes.Clone(); } }
+        internal static ThemePalette[] Palettes { get { return (ThemePalette[])(isDark ? darkPalettes : lightPalettes).Clone(); } }
         internal static ThemePalette Current { get { return current; } }
+        internal static ThemeMode Mode { get { return mode; } }
+        internal static bool IsDark { get { return isDark; } }
         internal static Color Background { get { return current.Background; } }
         internal static Color Surface { get { return current.Surface; } }
         internal static Color Border { get { return current.Border; } }
@@ -94,11 +129,56 @@ namespace NasDesk
 
         internal static bool SetPalette(string key)
         {
-            foreach (ThemePalette palette in palettes)
+            return SetAppearance(key, mode);
+        }
+
+        internal static bool SetMode(ThemeMode value)
+        {
+            return SetAppearance(current.Key, value);
+        }
+
+        internal static bool SetAppearance(string key, ThemeMode value)
+        {
+            if (value != ThemeMode.System && value != ThemeMode.Light && value != ThemeMode.Dark) return false;
+            bool dark = value == ThemeMode.Dark || value == ThemeMode.System && ReadSystemDarkMode();
+            return ApplyAppearance(key, value, dark);
+        }
+
+        internal static void RefreshSystemAppearance()
+        {
+            if (mode == ThemeMode.System) RefreshSystemAppearance(ReadSystemDarkMode());
+        }
+
+        internal static void RefreshSystemAppearance(bool systemIsDark)
+        {
+            if (mode == ThemeMode.System) ApplyAppearance(current.Key, mode, systemIsDark);
+        }
+
+        internal static bool ReadSystemDarkMode()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", false))
+                {
+                    object value = key == null ? null : key.GetValue("AppsUseLightTheme");
+                    return value is int && (int)value == 0;
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (System.Security.SecurityException) { }
+            return false;
+        }
+
+        private static bool ApplyAppearance(string key, ThemeMode value, bool dark)
+        {
+            foreach (ThemePalette palette in dark ? darkPalettes : lightPalettes)
             {
                 if (!String.Equals(palette.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
-                if (Object.ReferenceEquals(current, palette)) return true;
+                if (Object.ReferenceEquals(current, palette) && mode == value) return true;
                 current = palette;
+                mode = value;
+                isDark = dark;
                 EventHandler handler = Changed;
                 if (handler != null) handler(null, EventArgs.Empty);
                 return true;
@@ -149,7 +229,7 @@ namespace NasDesk
             if (SystemInformation.HighContrast) return;
             try
             {
-                int dark = 1;
+                int dark = IsDark ? 1 : 0;
                 if (DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int)) != 0)
                     DwmSetWindowAttribute(handle, 19, ref dark, sizeof(int));
                 int caption = ColorRef(Background);
@@ -293,8 +373,10 @@ namespace NasDesk
             Color foreground = primary ? NasTheme.AccentText : NasTheme.Text;
             Color line = primary ? NasTheme.Accent : NasTheme.Border;
             if (!Enabled) { fill = NasTheme.Surface; foreground = NasTheme.Muted; line = NasTheme.Border; }
-            else if (primary && pressed) fill = NasTheme.Blend(NasTheme.Accent, NasTheme.Background, 0.18F);
-            else if (primary && hover) fill = NasTheme.Blend(NasTheme.Accent, Color.White, 0.12F);
+            else if (primary && pressed) fill = NasTheme.IsDark ?
+                NasTheme.Blend(NasTheme.Accent, NasTheme.Background, 0.18F) : NasTheme.Blend(NasTheme.Accent, Color.Black, 0.15F);
+            else if (primary && hover) fill = NasTheme.IsDark ?
+                NasTheme.Blend(NasTheme.Accent, Color.White, 0.12F) : NasTheme.Blend(NasTheme.Accent, Color.Black, 0.06F);
             if (SystemInformation.HighContrast)
             {
                 fill = primary ? SystemColors.Highlight : SystemColors.Control;

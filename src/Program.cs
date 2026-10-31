@@ -65,7 +65,8 @@ namespace NasDesk
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            NasTheme.SetPalette(AppearanceSettings.Read(AppearancePath));
+            AppearanceSettings appearance = AppearanceSettings.ReadPreferences(AppearancePath);
+            NasTheme.SetAppearance(appearance.Theme, appearance.SelectedMode);
             bool first;
             using (Mutex instance = new Mutex(true, @"Local\NasDesk.Instance.v1", out first))
             using (EventWaitHandle activate = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\NasDesk.Activate.v1"))
@@ -115,12 +116,14 @@ namespace NasDesk
     internal sealed class AddressDialog : Form
     {
         private readonly TextBox address;
+        private ThemePalette appliedPalette;
         private string selectedUrl;
         private AddressDialog(string current)
         {
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
+            appliedPalette = NasTheme.Current;
             Text = "NAS 접속 주소";
             Font = new Font("Malgun Gothic", 9F);
             ClientSize = new Size(650, 242);
@@ -149,7 +152,34 @@ namespace NasDesk
             NasTheme.ApplyWindowChrome(this);
             AcceptButton = save;
             CancelButton = cancel;
+            NasTheme.Changed += OnThemeChanged;
             ResumeLayout(true);
+        }
+
+        private void OnThemeChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed || Disposing) return;
+            MainWindow.RecolorControls(this, appliedPalette);
+            appliedPalette = NasTheme.Current;
+            NasTheme.RefreshWindowChrome(this);
+            Invalidate(true);
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            int kind = message.Msg;
+            base.WndProc(ref message);
+            if (kind == 0x001A || kind == 0x031A || kind == 0x0015)
+            {
+                NasTheme.RefreshSystemAppearance();
+                NasTheme.RefreshWindowChrome(this);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) NasTheme.Changed -= OnThemeChanged;
+            base.Dispose(disposing);
         }
 
         internal static string Ask(IWin32Window owner, string current)

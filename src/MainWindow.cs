@@ -23,6 +23,7 @@ namespace NasDesk
         private readonly ConnectionStatusBadge connectionBadge;
         private readonly ContextMenuStrip themeMenu;
         private readonly List<ToolStripMenuItem> paletteItems = new List<ToolStripMenuItem>();
+        private readonly List<ToolStripMenuItem> modeItems = new List<ToolStripMenuItem>();
         private ThemePalette appliedPalette;
         internal readonly AddressBar Address;
         private readonly string settingsPath;
@@ -98,7 +99,11 @@ namespace NasDesk
             appearance.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             connectionBadge = new ConnectionStatusBadge { Dock = DockStyle.Fill, Margin = Padding.Empty, Font = new Font("Malgun Gothic", 9F) };
             themeMenu = new ContextMenuStrip { Font = new Font("Malgun Gothic", 9F) };
-            AddPaletteItems(themeMenu.Items);
+            AddModeItems(themeMenu.Items);
+            themeMenu.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem colors = new ToolStripMenuItem("색상 테마");
+            AddPaletteItems(colors.DropDownItems);
+            themeMenu.Items.Add(colors);
             TrayMenuStyle.Configure(themeMenu);
             ShellButton themeButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "테마", Glyph = ShellGlyph.Settings, AccessibleName = "색상 테마 선택" };
             themeButton.Click += delegate { themeMenu.Show(themeButton, new Point(themeButton.Width - themeMenu.GetPreferredSize(Size.Empty).Width, themeButton.Height + 6)); };
@@ -160,6 +165,9 @@ namespace NasDesk
                 menu.Items.Add("NAS 창 열기", null, delegate { RestoreFromTray(); });
                 menu.Items.Add("새로 고침", null, delegate { ReloadPage(); });
                 menu.Items.Add(new ToolStripSeparator());
+                ToolStripMenuItem modes = new ToolStripMenuItem("화면 모드");
+                AddModeItems(modes.DropDownItems);
+                menu.Items.Add(modes);
                 ToolStripMenuItem themes = new ToolStripMenuItem("색상 테마");
                 AddPaletteItems(themes.DropDownItems);
                 menu.Items.Add(themes);
@@ -187,14 +195,39 @@ namespace NasDesk
             }
         }
 
+        private void AddModeItems(ToolStripItemCollection items)
+        {
+            AddModeItem(items, "시스템 설정 따르기", ThemeMode.System);
+            AddModeItem(items, "라이트 모드", ThemeMode.Light);
+            AddModeItem(items, "다크 모드", ThemeMode.Dark);
+        }
+
+        private void AddModeItem(ToolStripItemCollection items, string text, ThemeMode mode)
+        {
+            ToolStripMenuItem item = new ToolStripMenuItem(text) { Tag = mode, Checked = mode == NasTheme.Mode };
+            item.Click += delegate { SelectMode(mode); };
+            modeItems.Add(item);
+            items.Add(item);
+        }
+
         internal void SelectPalette(string key)
         {
             try
             {
-                AppearanceSettings.Save(testMode ? settingsPath + ".appearance.json" : Program.AppearancePath, key);
+                AppearanceSettings.Save(testMode ? settingsPath + ".appearance.json" : Program.AppearancePath, key, NasTheme.Mode);
                 NasTheme.SetPalette(key);
             }
             catch (Exception error) { status.Text = "테마를 저장하지 못했습니다: " + error.Message; }
+        }
+
+        internal void SelectMode(ThemeMode mode)
+        {
+            try
+            {
+                AppearanceSettings.Save(testMode ? settingsPath + ".appearance.json" : Program.AppearancePath, NasTheme.Current.Key, mode);
+                NasTheme.SetMode(mode);
+            }
+            catch (Exception error) { status.Text = "화면 모드를 저장하지 못했습니다: " + error.Message; }
         }
 
         private void OnThemeChanged(object sender, EventArgs e)
@@ -205,6 +238,15 @@ namespace NasDesk
             Address.RefreshTheme();
             foreach (ToolStripMenuItem item in paletteItems)
                 item.Checked = (string)item.Tag == NasTheme.Current.Key;
+            foreach (ToolStripMenuItem item in modeItems)
+                item.Checked = (ThemeMode)item.Tag == NasTheme.Mode;
+            if (!Browser.IsDisposed && !browserNeedsRecreation)
+            {
+                // A browser process can exit between the check and its native call.
+                try { Browser.DefaultBackgroundColor = NasTheme.Surface; }
+                catch (InvalidOperationException) { }
+                catch (System.Runtime.InteropServices.COMException) { }
+            }
             NasTheme.RefreshWindowChrome(this);
             Icon previous = appIcon;
             appIcon = NasTheme.CreateIcon();
@@ -214,7 +256,7 @@ namespace NasDesk
             Invalidate(true);
         }
 
-        private static void RecolorControls(Control control, ThemePalette previous)
+        internal static void RecolorControls(Control control, ThemePalette previous)
         {
             // Web content owns its colors and keeps the current document/session.
             if (control is WebView2) return;
@@ -251,7 +293,25 @@ namespace NasDesk
 
         private static WebView2 CreateBrowser()
         {
-            return new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(24, 27, 32) };
+            return new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = NasTheme.Surface };
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            int kind = message.Msg;
+            base.WndProc(ref message);
+            if (kind == 0x001A || kind == 0x031A || kind == 0x0015)
+            {
+                // Windows broadcasts preference changes even to the hidden tray window.
+                NasTheme.RefreshSystemAppearance();
+                NasTheme.RefreshWindowChrome(this);
+            }
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            NasTheme.RefreshSystemAppearance();
         }
 
         internal Task InitializeAsync(CoreWebView2Environment sharedEnvironment)

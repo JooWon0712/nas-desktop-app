@@ -157,7 +157,7 @@ namespace NasDesk
             using (GraphicsPath shape = NasTheme.RoundRect(toggle, toggleHeight / 2F))
             using (SolidBrush track = new SolidBrush(Checked ? active : inactive)) e.Graphics.FillPath(track, shape);
             int inset = Math.Max(2, (int)(3 * scale)), knob = toggleHeight - inset * 2;
-            using (SolidBrush dot = new SolidBrush(Checked ? NasTheme.Background : NasTheme.Text))
+            using (SolidBrush dot = new SolidBrush(Checked ? NasTheme.AccentText : NasTheme.Text))
                 e.Graphics.FillEllipse(dot, Checked ? toggle.Right - inset - knob : toggle.Left + inset, toggle.Top + inset, knob, knob);
             Rectangle label = new Rectangle(0, 0, Math.Max(0, toggle.Left - (int)(7 * scale)), Height);
             TextRenderer.DrawText(e.Graphics, Text, Font, label, Enabled ? ForeColor : NasTheme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Right | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);

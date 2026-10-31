@@ -60,6 +60,7 @@ namespace NasDesk
             ConnectionAddressTests.Run(Check);
             QuickConnectResolverTests.Run(Check);
             AppearanceSettingsTests.Run(output, Check);
+            ThemeModeTests.Run(Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -133,14 +134,18 @@ namespace NasDesk
         private static async Task RunThemeTests(MainWindow window, CoreWebView2 core)
         {
             string originalTheme = NasTheme.Current.Key;
+            ThemeMode originalMode = NasTheme.Mode;
             string source = core.Source;
             string committed = window.Address.AddressText;
             await core.ExecuteScriptAsync("window.themeChangeMarker='same-document';");
             window.Address.IsEditing = true;
             window.Address.AddressText = "https://unsaved.example.test/";
             window.SelectPalette("violet");
+            window.SelectMode(ThemeMode.Light);
             Check(AppearanceSettings.Read(uiSettingsPath + ".appearance.json") == "violet"
-                && NasTheme.Current.Key == "violet", "Theme selection persists in isolated appearance settings");
+                && NasTheme.Current.Key == "violet"
+                && AppearanceSettings.ReadPreferences(uiSettingsPath + ".appearance.json").SelectedMode == ThemeMode.Light,
+                "Color and light mode persist in isolated appearance settings");
             Check(Object.ReferenceEquals(core, window.Browser.CoreWebView2) && core.Source == source
                 && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\""
                 && (await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"),
@@ -148,8 +153,19 @@ namespace NasDesk
             Check(window.Address.IsEditing && window.Address.AddressText == "https://unsaved.example.test/"
                 && ConnectionSettings.Read(uiSettingsPath).Url == committed,
                 "Theme change preserves an unsaved address edit and saved NAS address");
+            window.SelectMode(ThemeMode.System);
+            bool targetDark = !NasTheme.IsDark;
+            window.HideToTray();
+            NasTheme.RefreshSystemAppearance(targetDark);
+            Check(!window.Visible && NasTheme.IsDark == targetDark && window.BackColor == NasTheme.Background
+                && window.Address.Input.BackColor == NasTheme.Surface
+                && AppearanceSettings.ReadPreferences(uiSettingsPath + ".appearance.json").SelectedMode == ThemeMode.System
+                && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\"",
+                "System brightness changes update a hidden tray window without reloading its document or overwriting automatic mode");
+            window.RestoreFromTray();
             window.Address.IsEditing = false;
             window.SelectPalette(originalTheme);
+            window.SelectMode(originalMode);
         }
 
         private static async Task RunDownloadTests(CoreWebView2 core)
@@ -205,10 +221,18 @@ namespace NasDesk
             Task browserCrash = core.CallDevToolsProtocolMethodAsync("Browser.crash", "{}");
             ObserveExpectedCrash(browserCrash);
             await WaitFor(() => browserFailed && !window.Ready, 10000, "Test-profile browser process failure");
+            ThemeMode modeBeforeFailure = NasTheme.Mode;
+            NasTheme.SetMode(ThemeMode.System);
+            NasTheme.RefreshSystemAppearance(!NasTheme.IsDark);
+            Check(!window.Ready && !window.IsDisposed && window.BackColor == NasTheme.Background,
+                "System mode updates during a browser process failure do not interrupt the app");
             await window.ReconnectAsync();
             Check(window.Ready && originalBrowser.IsDisposed && !Object.ReferenceEquals(originalBrowser, window.Browser)
                 && window.Browser.CoreWebView2.Environment.UserDataFolder == profile,
                 "Actual browser crash recreates the control and retains its profile");
+            Check(window.Browser.DefaultBackgroundColor == NasTheme.Surface,
+                "Recreated browser uses the appearance selected while its old process was unavailable");
+            NasTheme.SetMode(modeBeforeFailure);
             CoreWebView2 recovered = window.Browser.CoreWebView2;
             recovered.SetVirtualHostNameToFolderMapping("nas-desk-alternate.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
             recovered.Navigate("https://nas-desk-alternate.test/index.html");
