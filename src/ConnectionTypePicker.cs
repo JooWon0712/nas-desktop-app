@@ -51,7 +51,7 @@ namespace NasDesk
             quickConnectItem.Click += delegate { Kind = ConnectionKind.SynologyQuickConnect; };
             menu.Items.Add(directItem);
             menu.Items.Add(quickConnectItem);
-            TrayMenuStyle.Configure(menu);
+            ContextMenuStyle.Configure(menu);
             UpdateSelection();
         }
 

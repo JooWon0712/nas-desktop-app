@@ -6,17 +6,17 @@ using System.Windows.Forms;
 
 namespace NasDesk
 {
-    internal sealed class TrayMenuStyle : ToolStripProfessionalRenderer
+    internal sealed class ContextMenuStyle : ToolStripProfessionalRenderer
     {
         private readonly HashSet<ToolStripDropDownMenu> menus = new HashSet<ToolStripDropDownMenu>();
         private readonly HashSet<ToolStripMenuItem> items = new HashSet<ToolStripMenuItem>();
 
-        internal TrayMenuStyle() : base(new MenuColors()) { RoundedEdges = false; }
+        internal ContextMenuStyle() : base(new MenuColors()) { RoundedEdges = false; }
 
         internal static void Configure(ContextMenuStrip menu)
         {
             if (menu == null) return;
-            TrayMenuStyle renderer = menu.Renderer as TrayMenuStyle ?? new TrayMenuStyle();
+            ContextMenuStyle renderer = menu.Renderer as ContextMenuStyle ?? new ContextMenuStyle();
             renderer.AttachMenu(menu);
         }
 

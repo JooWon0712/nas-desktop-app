@@ -67,18 +67,12 @@ namespace NasDesk
             WebContentPolicyTests.Run(output, Check);
             AddressHistoryStoreTests.Run(output, Check);
             AddressHistoryDialogTests.Run(output, Check);
-            TrayIsolationTests.Run(output, Check);
+            WindowLifecycleTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
             Check(!ConnectionSettings.IsInternal("https://nas.example.attacker.invalid:5001/", "https://nas.example:5001/"), "Lookalike host rejected");
             Check(!ConnectionSettings.IsInternal("https://nas.example:5002/", "https://nas.example:5001/"), "Different origin requires external navigation");
-            Check(MainWindow.ShouldHide(CloseReason.UserClosing, false, true, false), "X hides primary window");
-            Check(!MainWindow.ShouldHide(CloseReason.WindowsShutDown, false, true, false)
-                && !MainWindow.ShouldHide(CloseReason.TaskManagerClosing, false, true, false)
-                && !MainWindow.ShouldHide(CloseReason.UserClosing, true, true, false)
-                && !MainWindow.ShouldHide(CloseReason.UserClosing, false, true, true)
-                && !MainWindow.ShouldHide(CloseReason.UserClosing, false, false, false), "OS shutdown, task manager, explicit exit, popups and missing tray do not hide");
             string settingsFile = Path.Combine(output, "connection.json");
             new ConnectionSettings { Url = "https://nas.example:5001/" }.Save(settingsFile);
             new ConnectionSettings { Url = "https://nas.example:5002/" }.Save(settingsFile);
@@ -100,9 +94,8 @@ namespace NasDesk
             await ConnectionSessionTests.RunAsync(Check);
             await WaitFor(() => window.Ready || window.InitializationError != null, 20000, "WebView2 initialization");
             if (window.InitializationError != null) throw window.InitializationError;
-            Check(window.Ready && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
-                && TrayIsolationTests.HasNoNativeIcon(window),
-                "WebView2 and test tray behavior initialize without registering an OS notification icon");
+            Check(window.Ready && !window.IsDisposed && window.MinimizeBox && window.ControlBox,
+                "WebView2 initializes in a standard window with minimize and close controls");
             CoreWebView2 core = window.Browser.CoreWebView2;
             core.SetVirtualHostNameToFolderMapping("nas-desk.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
             core.Navigate("https://nas-desk.test/index.html");
@@ -114,27 +107,24 @@ namespace NasDesk
             await WaitFor(() => Application.OpenForms.Count >= 2, 10000, "Same-profile popup");
             MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
             await WaitFor(() => popup.Ready, 10000, "Popup document");
-            Check(!popup.ActualTrayRegistered && !popup.TrayVisible && !popup.TrayAvailable
-                && TrayIsolationTests.HasNoNativeIcon(popup),
-                "NAS test popups never register an OS notification icon or provide independent tray behavior");
             Check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "Popup shares NAS session");
             Check(!popup.Address.HistoryEnabled && popup.Address.Input.ReadOnly && popup.Address.Input.Visible
                 && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled,
                 "NAS popups retain a visible read-only address without connection selection controls");
             int before = Int32.Parse(await core.ExecuteScriptAsync("window.ticks"));
-            window.Close();
-            Check(!window.Visible && !window.IsDisposed && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
-                && TrayIsolationTests.HasNoNativeIcon(window),
-                "Close preserves tray behavior and the live WebView without registering an OS icon");
-            Check(!popup.Visible && !popup.IsDisposed, "Popup also hides with primary window");
-            await Task.Delay(2500);
-            Check(Int32.Parse(await core.ExecuteScriptAsync("window.ticks")) > before, "Web scripts continue while hidden");
-            window.RestoreFromTray();
-            Check(window.Visible && popup.Visible && window.TrayAvailable && !window.ActualTrayRegistered && !window.TrayVisible
-                && TrayIsolationTests.HasNoNativeIcon(window) && TrayIsolationTests.HasNoNativeIcon(popup)
+            window.WindowState = FormWindowState.Minimized;
+            Check(window.WindowState == FormWindowState.Minimized && !window.IsDisposed && !popup.IsDisposed
                 && Object.ReferenceEquals(core, window.Browser.CoreWebView2),
-                "Restore retains primary and popup WebViews without an OS notification icon");
-            Check((await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')")) == "\"persisted\"", "Web storage retained after hide/restore");
+                "Minimizing keeps the main WebView and its related popup alive");
+            await Task.Delay(2500);
+            Check(Int32.Parse(await core.ExecuteScriptAsync("window.ticks")) > before, "Web scripts continue while the main window is minimized");
+            window.RestoreWindow();
+            Check(window.Visible && window.WindowState == FormWindowState.Normal && !popup.IsDisposed
+                && Object.ReferenceEquals(core, window.Browser.CoreWebView2),
+                "Restoring the main window retains its existing WebView and related popup");
+            Check((await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted")
+                && (await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')")) == "\"persisted\"",
+                "Cookies and web storage survive minimize and restore");
             await popup.Browser.CoreWebView2.ExecuteScriptAsync("window.close()");
             await WaitFor(() => popup.IsDisposed, 5000, "window.close closes popup");
             Check(popup.IsDisposed && !window.IsDisposed, "Web popup close leaves primary window running");
@@ -156,10 +146,22 @@ namespace NasDesk
             core = window.Browser.CoreWebView2;
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
-            window.RequestExit();
-            Check(window.IsDisposed && popup.IsDisposed && !window.ActualTrayRegistered && !window.TrayVisible && !window.TrayAvailable
-                && TrayIsolationTests.HasNoNativeIcon(window),
-                "Explicit exit disposes windows and ends test tray behavior without registering an OS icon");
+            // Keep the real X/Close test last: it now ends the application's
+            // main message loop rather than hiding a still-running window.
+            CoreWebView2 finalCore = window.Browser.CoreWebView2;
+            HashSet<Form> beforeClosePopup = new HashSet<Form>(Application.OpenForms.Cast<Form>());
+            MainWindow closePopup = null;
+            await finalCore.ExecuteScriptAsync("window.open('about:blank','main_close_fixture');");
+            await WaitFor(() => {
+                closePopup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !beforeClosePopup.Contains(form));
+                return closePopup != null && closePopup.Ready;
+            }, 10000, "Related popup for the main-window close test");
+            var finalBrowser = window.Browser;
+            var finalPopupBrowser = closePopup.Browser;
+            window.Close();
+            Check(window.IsDisposed && popup.IsDisposed && closePopup.IsDisposed
+                && finalBrowser.IsDisposed && finalPopupBrowser.IsDisposed,
+                "Closing the main window through X semantics disposes the app and all related popup WebViews");
         }
 
         private static async Task RunThemeTests(MainWindow window, CoreWebView2 core)
@@ -186,14 +188,15 @@ namespace NasDesk
                 "Theme change preserves the read-only address, connection type and saved NAS settings");
             window.SelectMode(ThemeMode.System);
             bool targetDark = !NasTheme.IsDark;
-            window.HideToTray();
+            window.WindowState = FormWindowState.Minimized;
             NasTheme.RefreshSystemAppearance(targetDark);
-            Check(!window.Visible && NasTheme.IsDark == targetDark && window.BackColor == NasTheme.Background
+            Check(window.WindowState == FormWindowState.Minimized && !window.IsDisposed
+                && NasTheme.IsDark == targetDark && window.BackColor == NasTheme.Background
                 && window.Address.Input.BackColor == NasTheme.Surface
                 && AppearanceSettings.ReadPreferences(uiSettingsPath + ".appearance.json").SelectedMode == ThemeMode.System
                 && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\"",
-                "System brightness changes update a hidden tray window without reloading its document or overwriting automatic mode");
-            window.RestoreFromTray();
+                "System brightness changes update a minimized window without reloading its document or overwriting automatic mode");
+            window.RestoreWindow();
             window.SelectPalette(originalTheme);
             window.SelectMode(originalMode);
         }

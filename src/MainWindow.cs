@@ -26,9 +26,6 @@ namespace NasDesk
         private readonly bool testMode;
         private readonly bool popup;
         private readonly List<MainWindow> children = new List<MainWindow>();
-        private readonly List<MainWindow> hiddenChildren = new List<MainWindow>();
-        private readonly NotifyIcon tray;
-        private readonly ContextMenuStrip trayMenu;
         private readonly ToolStripStatusLabel status;
         private readonly ConnectionStatusBadge connectionBadge;
         private readonly ContextMenuStrip themeMenu;
@@ -49,7 +46,6 @@ namespace NasDesk
         private Icon appIcon;
         private readonly ToolTip toolTips = new ToolTip();
         private bool exitRequested;
-        private bool balloonShown;
         private CoreWebView2Environment environment;
         private Task initializationTask;
         private TaskCompletionSource<bool> browserExitSignal;
@@ -63,9 +59,6 @@ namespace NasDesk
         internal WebView2 Browser { get; private set; }
         internal bool Ready { get; private set; }
         internal Exception InitializationError { get; private set; }
-        internal bool ActualTrayRegistered { get { return tray != null && tray.Visible; } }
-        internal bool TrayVisible { get { return ActualTrayRegistered; } }
-        internal bool TrayAvailable { get { return !popup && !IsDisposed && !exitRequested && (testMode || ActualTrayRegistered); } }
         internal string BrowserProfileName { get { return browserProfileName; } }
         internal bool AllowExternalContent { get { return allowExternalContent; } }
         internal int BlockedRequests { get { return blockedRequests; } }
@@ -133,7 +126,7 @@ namespace NasDesk
             ToolStripMenuItem colors = new ToolStripMenuItem("색상 테마");
             AddPaletteItems(colors.DropDownItems);
             themeMenu.Items.Add(colors);
-            TrayMenuStyle.Configure(themeMenu);
+            ContextMenuStyle.Configure(themeMenu);
             ShellButton themeButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "테마", Glyph = ShellGlyph.Settings, AccessibleName = "색상 테마 선택" };
             themeButton.Click += delegate { themeMenu.Show(themeButton, new Point(themeButton.Width - themeMenu.GetPreferredSize(Size.Empty).Width, themeButton.Height + 6)); };
             appearance.Controls.Add(connectionBadge, 0, 0);
@@ -167,7 +160,7 @@ namespace NasDesk
             StatusStrip footer = new StatusStrip { BackColor = NasTheme.Background, ForeColor = NasTheme.Muted, SizingGrip = false, Padding = new Padding(20, 4, 20, 4) };
             status = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft, ForeColor = NasTheme.Muted, Text = "보안 연결을 준비하고 있습니다." };
             footer.Items.Add(status);
-            footer.Items.Add(new ToolStripStatusLabel { Text = "X로 닫아도 트레이에서 계속 실행", ForeColor = NasTheme.Muted });
+            footer.Items.Add(new ToolStripStatusLabel { Text = popup ? "X를 누르면 이 창 닫기" : "X를 누르면 앱 종료", ForeColor = NasTheme.Muted });
 
             errorPanel = new ConnectionFailureView { Dock = DockStyle.Fill, Visible = false };
             errorPanel.RetryRequested += async delegate { await ReconnectAsync(); };
@@ -187,31 +180,6 @@ namespace NasDesk
 
             if (!popup)
             {
-                ContextMenuStrip menu = trayMenu = new ContextMenuStrip();
-                menu.BackColor = NasTheme.Surface;
-                menu.ForeColor = NasTheme.Text;
-                menu.Font = new Font("Malgun Gothic", 9F);
-                menu.Items.Add("NAS 창 열기", null, delegate { RestoreFromTray(); });
-                menu.Items.Add("새로 고침", null, delegate { ReloadPage(); });
-                menu.Items.Add(new ToolStripSeparator());
-                ToolStripMenuItem modes = new ToolStripMenuItem("화면 모드");
-                AddModeItems(modes.DropDownItems);
-                menu.Items.Add(modes);
-                ToolStripMenuItem themes = new ToolStripMenuItem("색상 테마");
-                AddPaletteItems(themes.DropDownItems);
-                menu.Items.Add(themes);
-                menu.Items.Add("보안 및 개인정보", null, delegate { RestoreFromTray(); ShowSecuritySettings(); });
-                menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add("완전 종료", null, delegate { RequestExit(); });
-                TrayMenuStyle.Configure(menu);
-                // Local and visual tests exercise tray behavior without creating
-                // a native notification icon or adding an entry to Windows.
-                if (!testMode)
-                {
-                    tray = new NotifyIcon { Text = Program.AppName, Icon = appIcon, ContextMenuStrip = menu, Visible = true };
-                    tray.DoubleClick += delegate { RestoreFromTray(); };
-                    tray.BalloonTipClicked += delegate { RestoreFromTray(); };
-                }
                 Shown += async delegate { await InitializeAsync(null); };
             }
             NasTheme.Changed += OnThemeChanged;
@@ -287,7 +255,6 @@ namespace NasDesk
             Icon previous = appIcon;
             appIcon = NasTheme.CreateIcon();
             Icon = appIcon;
-            if (tray != null) tray.Icon = appIcon;
             previous.Dispose();
             Invalidate(true);
         }
@@ -350,7 +317,7 @@ namespace NasDesk
             base.WndProc(ref message);
             if (kind == 0x001A || kind == 0x031A || kind == 0x0015)
             {
-                // Windows broadcasts preference changes even to the hidden tray window.
+                // Keep the window theme in sync with Windows preferences.
                 NasTheme.RefreshSystemAppearance();
                 NasTheme.RefreshWindowChrome(this);
             }
@@ -665,9 +632,8 @@ namespace NasDesk
                 e.NewWindow = child.Browser.CoreWebView2;
                 children.Add(child);
                 MainWindow trackedChild = child;
-                child.FormClosed += delegate { children.Remove(trackedChild); hiddenChildren.Remove(trackedChild); };
-                if (Visible) child.Show();
-                else hiddenChildren.Add(child);
+                child.FormClosed += delegate { children.Remove(trackedChild); };
+                child.Show();
             }
             catch (OperationCanceledException) { if (child != null) child.Dispose(); }
             catch (Exception error)
@@ -895,61 +861,18 @@ namespace NasDesk
             }
         }
 
-        internal void HideToTray()
-        {
-            if (!TrayAvailable) return;
-            foreach (MainWindow child in children)
-            {
-                if (child.Visible && !hiddenChildren.Contains(child)) hiddenChildren.Add(child);
-                child.HideToTrayChildren();
-                child.Hide();
-            }
-            Hide();
-            // Keep WebView alive; no TrySuspend, cache deletion, or logout on hide.
-            if (!balloonShown && ActualTrayRegistered)
-            {
-                balloonShown = true;
-                tray.ShowBalloonTip(3000, Program.AppName, "트레이에서 계속 실행 중입니다. 더블클릭하면 다시 열립니다. 종료하려면 우클릭 → 완전 종료를 선택하세요.", ToolTipIcon.Info);
-            }
-        }
-
-        private void HideToTrayChildren()
-        {
-            foreach (MainWindow child in children)
-            {
-                if (child.Visible && !hiddenChildren.Contains(child)) hiddenChildren.Add(child);
-                child.HideToTrayChildren();
-                child.Hide();
-            }
-        }
-
-        internal void RestoreFromTray()
+        internal void RestoreWindow()
         {
             if (IsDisposed || exitRequested) return;
             Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
-            foreach (MainWindow child in hiddenChildren.ToArray()) if (!child.IsDisposed) child.RestoreFromTray();
-            hiddenChildren.Clear();
-        }
-
-        internal static bool ShouldHide(CloseReason reason, bool exiting, bool trayAvailable, bool isPopup)
-        {
-            return reason == CloseReason.UserClosing && !exiting && trayAvailable && !isPopup;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (ShouldHide(e.CloseReason, exitRequested, TrayAvailable, popup))
-            {
-                e.Cancel = true;
-                HideToTray();
-            }
-            else
-            {
-                exitRequested = true;
-                foreach (MainWindow child in children.ToArray()) child.RequestExit();
-            }
+            exitRequested = true;
+            foreach (MainWindow child in children.ToArray()) child.RequestExit();
             base.OnFormClosing(e);
         }
 
@@ -967,12 +890,6 @@ namespace NasDesk
                 themeMenu.Dispose();
                 if (!popup) connection.Dispose();
                 foreach (MainWindow child in children.ToArray()) child.Dispose();
-                if (tray != null)
-                {
-                    tray.Visible = false;
-                    tray.Dispose();
-                }
-                if (trayMenu != null) trayMenu.Dispose();
                 Browser.Dispose();
                 toolTips.Dispose();
                 appIcon.Dispose();

@@ -40,9 +40,8 @@ namespace NasDesk
                 var firstBrowser = window.Browser;
                 check(core.Profile.ProfileName == firstName && !String.Equals(firstName, "Default", StringComparison.OrdinalIgnoreCase)
                     && Path.GetFullPath(core.Environment.UserDataFolder).TrimEnd(Path.DirectorySeparatorChar)
-                        == Path.GetFullPath(userData).TrimEnd(Path.DirectorySeparatorChar)
-                    && !window.TrayVisible && window.TrayAvailable,
-                    "A test NAS uses its own named profile inside the isolated user-data folder without registering an OS tray icon");
+                        == Path.GetFullPath(userData).TrimEnd(Path.DirectorySeparatorChar),
+                    "A test NAS uses its own named profile inside the isolated user-data folder");
                 check(!core.Settings.IsPasswordAutosaveEnabled && !core.Settings.IsGeneralAutofillEnabled
                     && !core.Settings.AreHostObjectsAllowed && !core.Settings.IsWebMessageEnabled && !window.AllowExternalContent,
                     "New NAS profiles disable password and general autofill, native bridges and external content by default");
@@ -65,8 +64,8 @@ namespace NasDesk
                     }, "Same-NAS profile popup");
                     check(popup.Browser.CoreWebView2.Profile.ProfileName == firstName
                         && popup.BrowserProfileName == firstName && await Cookie(popup.Browser.CoreWebView2, first.Url) == "A"
-                        && await State(popup.Browser.CoreWebView2) == "\"A\"" && !popup.TrayVisible && !popup.TrayAvailable,
-                        "A same-NAS popup shares only its opener's named profile, cookies and web storage without creating another tray icon");
+                        && await State(popup.Browser.CoreWebView2) == "\"A\"",
+                        "A same-NAS popup shares only its opener's named profile, cookies and web storage");
                 }
                 finally
                 {

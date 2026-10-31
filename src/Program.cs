@@ -75,7 +75,7 @@ namespace NasDesk
                             try
                             {
                                 if (window.IsHandleCreated && !window.IsDisposed)
-                                    window.BeginInvoke((Action)window.RestoreFromTray);
+                                    window.BeginInvoke((Action)window.RestoreWindow);
                             }
                             catch (InvalidOperationException) { }
                         }, null, Timeout.Infinite, false);

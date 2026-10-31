@@ -307,7 +307,7 @@ namespace NasDesk
         }
     }
 
-    internal enum ShellGlyph { None, Home, Refresh, Download, Settings, External, Tray, ArrowRight, History }
+    internal enum ShellGlyph { None, Home, Refresh, Download, Settings, External, ArrowRight, History }
 
     internal sealed class ShellLogo : Control
     {
@@ -462,12 +462,6 @@ namespace NasDesk
                     graphics.DrawLines(pen, new PointF[] { new PointF(7, 3), new PointF(3, 3), new PointF(3, 13), new PointF(13, 13), new PointF(13, 9) });
                     graphics.DrawLine(pen, 7, 9, 13, 3);
                     graphics.DrawLines(pen, new PointF[] { new PointF(9, 3), new PointF(13, 3), new PointF(13, 7) });
-                    break;
-                case ShellGlyph.Tray:
-                    graphics.DrawLine(pen, 8, 2, 8, 8);
-                    graphics.DrawLines(pen, new PointF[] { new PointF(5, 5), new PointF(8, 8), new PointF(11, 5) });
-                    graphics.DrawLines(pen, new PointF[] { new PointF(3, 8), new PointF(2, 13), new PointF(14, 13), new PointF(13, 8) });
-                    graphics.DrawLine(pen, 5.5F, 11, 10.5F, 11);
                     break;
                 case ShellGlyph.ArrowRight:
                     graphics.DrawLine(pen, 2.5F, 8, 13.5F, 8);
