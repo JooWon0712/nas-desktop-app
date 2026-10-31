@@ -1,0 +1,24 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build Windows app
+        shell: pwsh
+        run: ./build.ps1
+      - name: Upload portable Windows app
+        uses: actions/upload-artifact@v7
+        with:
+          name: SynologyNasDesktop-windows-x64
+          path: dist/SynologyNasDesktop/
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+.packages/
+dist/
+test-output/
+connection.local.json
+*.user

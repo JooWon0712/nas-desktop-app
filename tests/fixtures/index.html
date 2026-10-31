@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>NAS Desk local fixture</title>
+<script>
+window.ticks = 0;
+setInterval(() => window.ticks++, 250);
+document.cookie = 'nas_desk_test=persisted; max-age=600; path=/; secure; samesite=lax';
+localStorage.setItem('nas_desk_test', 'persisted');
+</script>
+<p>Local test fixture. No NAS access.</p>
