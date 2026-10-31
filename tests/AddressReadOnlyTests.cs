@@ -97,15 +97,16 @@ namespace NasDesk
                 "Deleting the displayed connection from history keeps its address, settings, document and login storage");
             if (current != null) history.Add(original, current.Name);
 
-            HashSet<Form> existing = new HashSet<Form>(Application.OpenForms.Cast<Form>());
+            HashSet<MainWindow> existing = new HashSet<MainWindow>(window.BrowserTabs);
+            int topLevelWindows = Application.OpenForms.Cast<Form>().Count(form => form.TopLevel);
             MainWindow popup = null;
             try
             {
                 await core.ExecuteScriptAsync("window.open('about:blank','readonly_address_popup_fixture');");
                 await WaitFor(() => {
-                    popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !existing.Contains(form));
-                    return popup != null && popup.Ready;
-                }, "Read-only NAS popup");
+                    popup = window.BrowserTabs.FirstOrDefault(tab => !existing.Contains(tab));
+                    return popup != null && popup.Ready && popup.Parent != null;
+                }, "Read-only NAS application tab");
                 string popupAddress = popup.Address.AddressText;
                 Click(popup.Address.Input);
                 popup.Address.HistoryButton.PerformClick();
@@ -117,11 +118,14 @@ namespace NasDesk
                 bool accepted = popup.ApplyConnection(original);
                 await Task.Yield();
                 check(!accepted && !popup.Address.HistoryEnabled && popup.HistoryDialog == null
-                    && popup.Address.Input.Visible && popup.Address.Input.ReadOnly && popup.Address.TypePicker.Visible
+                    && !popup.TopLevel && popup.Parent != null && window.Visible
+                    && Application.OpenForms.Cast<Form>().Count(form => form.TopLevel) == topLevelWindows
+                    && Object.ReferenceEquals(window.ActiveBrowserTab, popup)
+                    && !popup.Address.Input.Visible && popup.Address.Input.ReadOnly && !popup.Address.TypePicker.Visible
                     && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled
                     && popup.Address.AddressText == popupAddress && File.ReadAllText(settingsPath) == settingsFile
-                    && core.Source == source,
-                    "NAS popups display a read-only address and reject history selection, shortcuts and connection changes");
+                    && IsReadOnly(address, original) && core.Source == source,
+                    "NAS application tabs hide duplicate address controls and cannot replace the main connection or its visible read-only address");
             }
             finally
             {

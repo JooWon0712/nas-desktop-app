@@ -53,19 +53,22 @@ namespace NasDesk
                         && item.PermissionState == CoreWebView2PermissionState.Allow),
                     "The first local NAS fixture stores its own cookie, web storage and explicit permission state");
 
-                HashSet<Form> before = new HashSet<Form>(Application.OpenForms.Cast<Form>());
+                HashSet<MainWindow> before = new HashSet<MainWindow>(window.BrowserTabs);
+                int topLevelWindows = Application.OpenForms.Cast<Form>().Count(form => form.TopLevel);
                 MainWindow popup = null;
                 try
                 {
                     await core.ExecuteScriptAsync("window.open('about:blank','isolated_profile_popup');");
                     await WaitFor(() => {
-                        popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !before.Contains(form));
-                        return popup != null && popup.Ready;
-                    }, "Same-NAS profile popup");
+                        popup = window.BrowserTabs.FirstOrDefault(tab => !before.Contains(tab));
+                        return popup != null && popup.Ready && popup.Parent != null;
+                    }, "Same-NAS profile application tab");
                     check(popup.Browser.CoreWebView2.Profile.ProfileName == firstName
                         && popup.BrowserProfileName == firstName && await Cookie(popup.Browser.CoreWebView2, first.Url) == "A"
-                        && await State(popup.Browser.CoreWebView2) == "\"A\"",
-                        "A same-NAS popup shares only its opener's named profile, cookies and web storage");
+                        && await State(popup.Browser.CoreWebView2) == "\"A\""
+                        && !popup.TopLevel && popup.Parent != null && window.Visible
+                        && Application.OpenForms.Cast<Form>().Count(form => form.TopLevel) == topLevelWindows,
+                        "A same-NAS application tab shares its opener's named profile, cookies and storage without another desktop window");
                 }
                 finally
                 {

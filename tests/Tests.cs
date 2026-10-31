@@ -45,7 +45,8 @@ namespace NasDesk
                 };
                 Application.Run(window);
             }
-            foreach (string result in results) Console.WriteLine(result);
+            foreach (string result in results)
+                if (result.StartsWith("FAIL ", StringComparison.Ordinal)) Console.WriteLine(result);
             return exitCode;
         }
 
@@ -53,6 +54,7 @@ namespace NasDesk
         {
             if (!condition) throw new Exception(name);
             results.Add("PASS " + name);
+            Console.WriteLine("PASS " + name);
         }
 
         private static void UnitTests()
@@ -103,31 +105,44 @@ namespace NasDesk
             Check(!core.Settings.AreHostObjectsAllowed && !core.Settings.IsWebMessageEnabled, "Native host bridge disabled");
             Check((await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "HTTPS cookies work");
             await RunThemeTests(window, core);
+            int topLevelWindows = Application.OpenForms.Cast<Form>().Count(form => form.TopLevel);
             await core.ExecuteScriptAsync("window.open('about:blank', 'nas_desk_popup')");
-            await WaitFor(() => Application.OpenForms.Count >= 2, 10000, "Same-profile popup");
-            MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
-            await WaitFor(() => popup.Ready, 10000, "Popup document");
+            MainWindow popup = null;
+            await WaitFor(() => {
+                popup = window.BrowserTabs.FirstOrDefault(tab => tab != window);
+                return popup != null && popup.Ready && popup.Parent != null;
+            }, 10000, "Same-profile application tab");
             Check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "Popup shares NAS session");
-            Check(!popup.Address.HistoryEnabled && popup.Address.Input.ReadOnly && popup.Address.Input.Visible
-                && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled,
-                "NAS popups retain a visible read-only address without connection selection controls");
+            Check(!popup.TopLevel && popup.Parent != null && window.Visible
+                && Application.OpenForms.Cast<Form>().Count(form => form.TopLevel) == topLevelWindows
+                && Object.ReferenceEquals(window.ActiveBrowserTab, popup)
+                && !popup.Address.HistoryEnabled && popup.Address.Input.ReadOnly && !popup.Address.Input.Visible
+                && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled
+                && window.Address.Input.Visible && window.Address.Input.ReadOnly,
+                "NAS applications open as selected tabs with one main address bar and no additional desktop window");
             int before = Int32.Parse(await core.ExecuteScriptAsync("window.ticks"));
             window.WindowState = FormWindowState.Minimized;
             Check(window.WindowState == FormWindowState.Minimized && !window.IsDisposed && !popup.IsDisposed
                 && Object.ReferenceEquals(core, window.Browser.CoreWebView2),
-                "Minimizing keeps the main WebView and its related popup alive");
+                "Minimizing keeps the main WebView and its related application tab alive");
             await Task.Delay(2500);
             Check(Int32.Parse(await core.ExecuteScriptAsync("window.ticks")) > before, "Web scripts continue while the main window is minimized");
             window.RestoreWindow();
             Check(window.Visible && window.WindowState == FormWindowState.Normal && !popup.IsDisposed
                 && Object.ReferenceEquals(core, window.Browser.CoreWebView2),
-                "Restoring the main window retains its existing WebView and related popup");
+                "Restoring the main window retains its existing WebView and related application tab");
             Check((await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted")
                 && (await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')")) == "\"persisted\"",
                 "Cookies and web storage survive minimize and restore");
             await popup.Browser.CoreWebView2.ExecuteScriptAsync("window.close()");
-            await WaitFor(() => popup.IsDisposed, 5000, "window.close closes popup");
-            Check(popup.IsDisposed && !window.IsDisposed, "Web popup close leaves primary window running");
+            await WaitFor(() => popup.IsDisposed, 5000, "window.close closes application tab");
+            Check(popup.IsDisposed && !window.IsDisposed && Object.ReferenceEquals(window.ActiveBrowserTab, window)
+                && window.BrowserTabs.Count == 1
+                && Application.OpenForms.Cast<Form>().Count(form => form.TopLevel) == topLevelWindows,
+                "Web window.close removes its tab and returns to the running main NAS document");
+            await BrowserTabTests.RunAsync(window, core, fixture, Check);
+            await BrowserTabShortcutTests.RunAsync(window, core, fixture, Check);
+            await BrowserTabSecurityTests.RunAsync(output, fixture, Check);
             bool blocked = false;
             core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e) { if (e.Uri.StartsWith("https://blocked.invalid/")) blocked = e.Cancel; };
             core.Navigate("https://blocked.invalid/");
@@ -139,6 +154,7 @@ namespace NasDesk
             await BrowserScrollbarTests.RunAsync(output, fixture, Check);
             await BrowserProfileIsolationTests.RunAsync(output, Check);
             await WebContentPolicyBrowserTests.RunAsync(output, Check);
+            await PackageIconBrowserTests.RunAsync(output, Check);
             await RunAddressTests(window, core);
             core = window.Browser.CoreWebView2;
             await AddressReadOnlyTests.RunAsync(window, core, uiSettingsPath, Check);
@@ -149,19 +165,19 @@ namespace NasDesk
             // Keep the real X/Close test last: it now ends the application's
             // main message loop rather than hiding a still-running window.
             CoreWebView2 finalCore = window.Browser.CoreWebView2;
-            HashSet<Form> beforeClosePopup = new HashSet<Form>(Application.OpenForms.Cast<Form>());
+            HashSet<MainWindow> beforeClosePopup = new HashSet<MainWindow>(window.BrowserTabs);
             MainWindow closePopup = null;
             await finalCore.ExecuteScriptAsync("window.open('about:blank','main_close_fixture');");
             await WaitFor(() => {
-                closePopup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !beforeClosePopup.Contains(form));
-                return closePopup != null && closePopup.Ready;
-            }, 10000, "Related popup for the main-window close test");
+                closePopup = window.BrowserTabs.FirstOrDefault(tab => !beforeClosePopup.Contains(tab));
+                return closePopup != null && closePopup.Ready && closePopup.Parent != null;
+            }, 10000, "Related application tab for the main-window close test");
             var finalBrowser = window.Browser;
             var finalPopupBrowser = closePopup.Browser;
             window.Close();
             Check(window.IsDisposed && popup.IsDisposed && closePopup.IsDisposed
                 && finalBrowser.IsDisposed && finalPopupBrowser.IsDisposed,
-                "Closing the main window through X semantics disposes the app and all related popup WebViews");
+                "Closing the main window through X semantics disposes the app and all related application tab WebViews");
         }
 
         private static async Task RunThemeTests(MainWindow window, CoreWebView2 core)

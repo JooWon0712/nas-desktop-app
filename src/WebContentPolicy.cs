@@ -15,11 +15,25 @@ namespace NasDesk
             if (String.IsNullOrEmpty(value) || !Uri.TryCreate(value, UriKind.Absolute, out uri)) return false;
             if (uri.Scheme == "data" || uri.Scheme == "blob") return true;
             if (uri.Scheme != "https" && uri.Scheme != "wss") return false;
-            string httpsValue = uri.Scheme == "wss" ? new UriBuilder(uri) { Scheme = "https", Port = uri.Port }.Uri.AbsoluteUri : value;
+            string httpsValue = uri.Scheme == "wss" ? new UriBuilder(uri) { Scheme = "https", Port = uri.Port }.Uri.AbsoluteUri : EscapeResourceTemplate(value);
             if (session.IsNasOrigin(httpsValue)) return true;
             // Only the configured QuickConnect bootstrap document gets this
             // compatibility exception. It is never a NAS origin or permission grant.
             return allowExternal || (uri.Scheme == "https" && quickConnectBootstrap && session.IsQuickConnect);
+        }
+
+        private static string EscapeResourceTemplate(string value)
+        {
+            // Chromium accepts literal braces in paths/queries (DSM uses {0}
+            // for package icons), while .NET's user-input URI validator does not.
+            // Escape only the validation copy's suffix; preserve the original
+            // authority and actual request, and keep every other strict check.
+            if (value.IndexOf('{') < 0 && value.IndexOf('}') < 0) return value;
+            int authorityStart = value.IndexOf("://", StringComparison.Ordinal);
+            if (authorityStart < 0) return value;
+            int suffix = value.IndexOfAny(new[] { '/', '?', '#' }, authorityStart + 3);
+            if (suffix < 0) return value;
+            return value.Substring(0, suffix) + value.Substring(suffix).Replace("{", "%7B").Replace("}", "%7D");
         }
 
         internal static bool ReadExternalContentAllowed(string path, string profileName)

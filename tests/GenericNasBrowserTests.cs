@@ -71,21 +71,24 @@ namespace NasDesk
                     && await core.ExecuteScriptAsync("localStorage.getItem('generic_nas_fixture')") == "\"" + name + "\"",
                     "Synthetic direct HTTPS " + name + " retains cookies and web storage");
 
-                HashSet<Form> existing = new HashSet<Form>(Application.OpenForms.Cast<Form>());
+                HashSet<MainWindow> existing = new HashSet<MainWindow>(window.BrowserTabs);
+                int topLevelWindows = Application.OpenForms.Cast<Form>().Count(form => form.TopLevel);
                 string popupUrl = new Uri(home, "popup.html").AbsoluteUri;
                 await core.ExecuteScriptAsync("window.open('about:blank','generic_popup_" + index + "');");
                 await WaitFor(() => {
-                    popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().FirstOrDefault(form => !existing.Contains(form));
-                    return popup != null && popup.Ready;
-                }, "Same-origin generic HTTPS popup creation");
+                    popup = window.BrowserTabs.FirstOrDefault(tab => !existing.Contains(tab));
+                    return popup != null && popup.Ready && popup.Parent != null;
+                }, "Same-origin generic HTTPS application tab creation");
                 // Start with an inherited blank document: virtual-host mappings
                 // are per WebView and must exist before this synthetic URL loads.
                 popup.Browser.CoreWebView2.SetVirtualHostNameToFolderMapping(home.DnsSafeHost, pages, CoreWebView2HostResourceAccessKind.DenyCors);
                 popup.Browser.CoreWebView2.Navigate(popupUrl);
                 await WaitFor(() => popup.Browser.CoreWebView2.DocumentTitle == "Generic HTTPS popup fixture", "Same-origin generic HTTPS popup page");
                 check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("generic_nas_fixture=" + name)
-                    && await popup.Browser.CoreWebView2.ExecuteScriptAsync("localStorage.getItem('generic_nas_fixture')") == "\"" + name + "\"",
-                    "Synthetic direct HTTPS " + name + " popup shares its configured NAS cookies and storage");
+                    && await popup.Browser.CoreWebView2.ExecuteScriptAsync("localStorage.getItem('generic_nas_fixture')") == "\"" + name + "\""
+                    && !popup.TopLevel && popup.Parent != null && window.Visible
+                    && Application.OpenForms.Cast<Form>().Count(form => form.TopLevel) == topLevelWindows,
+                    "Synthetic direct HTTPS " + name + " opens a session-sharing application tab without another desktop window");
                 popup.RequestExit();
                 popup.Dispose();
                 popup = null;

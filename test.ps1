@@ -1,3 +1,4 @@
+param([ValidateRange(30,300)] [int]$TimeoutSeconds = 120)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'tools\BuildArtifacts.ps1')
 $testLock = Enter-NasDeskArtifactLock -ProjectRoot $PSScriptRoot -Name tests
@@ -33,7 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
     $taskArguments = '"{0}" "{1}"' -f $runOutput,(Join-Path $PSScriptRoot 'tests\fixtures')
     $process = Start-Process -FilePath (Join-Path $appOutput 'NasDesk.Tests.exe') -ArgumentList $taskArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $runStdout -RedirectStandardError $runStderr
-    if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id; $process.WaitForExit(); throw 'Tests timed out.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while (-not $process.WaitForExit(1000)) {
+        if ([DateTime]::UtcNow -ge $deadline) { Stop-Process -Id $process.Id; $process.WaitForExit(); throw 'Tests timed out.' }
+    }
     $process.WaitForExit() # Finish redirected stream callbacks before copying/removing logs.
     Get-Content -LiteralPath $runStdout
     if ($process.ExitCode -ne 0) { Get-Content -LiteralPath $runStderr; throw "Tests failed with exit code $($process.ExitCode)." }

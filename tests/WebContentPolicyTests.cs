@@ -20,6 +20,30 @@ namespace NasDesk
                     "Strict content policy rejects different hosts, effective ports and lookalike suffixes");
                 check(!WebContentPolicy.AllowsRequest(direct, "https://external.content.test/", false, true),
                     "A bootstrap flag cannot relax a direct NAS connection's external-content policy");
+                string icon = "https://nas.content.test:9443/webapi/entry.cgi?method=getHDIcon&path=webman/3rdparty/Example/icon_{0}.png";
+                check(WebContentPolicy.AllowsRequest(direct, icon, false, false)
+                    && WebContentPolicy.AllowsRequest(direct, "https://nas.content.test:9443/images/icon_{0}.png", false, false)
+                    && WebContentPolicy.AllowsRequest(direct, icon.Replace("{", "%7B").Replace("}", "%7D"), false, false),
+                    "Same-NAS package icon templates work with raw or already escaped braces in paths and queries");
+                Uri inputUri;
+                check(!ConnectionAddress.TrySecureUri(icon, out inputUri) && !direct.Allows(icon),
+                    "Resource template compatibility leaves configured addresses and top-level navigation validation strict");
+                bool iconBoundaryHeld = true;
+                foreach (string invalid in new[] {
+                    icon.Replace("nas.content.test:9443", "other.content.test:9443"),
+                    icon.Replace(":9443", ":9444"),
+                    icon.Replace("nas.content.test", "nas.content.test.attacker.invalid"),
+                    icon.Replace("https:", "http:"),
+                    icon.Replace("https://", "https://user@"),
+                    icon.Replace("https://", "https://@"),
+                    icon.Replace("icon_{0}", "icon_ {0}"),
+                    icon.Replace("icon_{0}", "icon_\\{0}"),
+                    icon.Replace("icon_{0}", "icon_\t{0}"),
+                    "https://nas.content.test{0}:9443/image.png",
+                    "https://nas.content.test:9443@attacker.invalid/image_{0}.png" })
+                    iconBoundaryHeld &= !WebContentPolicy.AllowsRequest(direct, invalid, false, false);
+                check(iconBoundaryHeld,
+                    "Package icon templates never relax HTTPS, exact host/port, credentials or malformed-authority and path restrictions");
                 check(WebContentPolicy.AllowsRequest(direct, "https://external.content.test/app.js", true, false)
                     && WebContentPolicy.AllowsRequest(direct, "wss://external.content.test/events", true, false),
                     "A deliberate per-NAS compatibility choice permits external HTTPS and WSS requests");
