@@ -85,22 +85,21 @@ namespace NasDesk
                     && window.FailureView.ErrorDetail == lastError.ToString(),
                     "Retry keeps the failed browser hidden while loading and restores the retry action after another failure");
 
-                window.FailureView.EditAddressButton.PerformClick();
-                check(window.Address.IsEditing && !window.Address.Input.ReadOnly
-                    && window.IsFailureVisible && core.Source == failedAddress,
-                    "The failure screen's address action opens the editor without changing or navigating the saved connection");
+                AddressModalBrowserTests.InModal(window, delegate { window.FailureView.EditAddressButton.PerformClick(); }, delegate(AddressHistoryDialog dialog)
+                {
+                    check(dialog.Modal && window.Address.Input.ReadOnly && window.IsFailureVisible && core.Source == failedAddress,
+                        "The failure screen opens address history while preserving its read-only address and failed connection");
+                });
 
                 const string recovery = "https://failure-recovery.test/index.html";
                 core.SetVirtualHostNameToFolderMapping("failure-recovery.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
-                window.Address.AddressText = recovery;
-                window.Address.Kind = ConnectionKind.DirectHttps;
-                window.Address.ConnectButton.PerformClick();
+                window.ApplyConnection(new ConnectionSettings { Url = recovery, Type = "https" });
                 await WaitFor(() => core.Source == recovery && core.DocumentTitle == "NAS Desk local fixture"
                     && !window.IsFailureVisible, "Connection failure recovery through the address editor");
                 check(window.Browser.Visible && !window.FailureView.Visible && window.Ready
                     && Object.ReferenceEquals(originalBrowser, window.Browser)
                     && Object.ReferenceEquals(core, window.Browser.CoreWebView2)
-                    && !window.Address.IsEditing && ConnectionSettings.Read(settingsPath).Url == recovery,
+                    && window.Address.Input.ReadOnly && ConnectionSettings.Read(settingsPath).Url == recovery,
                     "A valid replacement address restores the NAS document and the same live WebView after failure");
 
                 string recoveryHtml = File.ReadAllText(Path.Combine(fixture, "index.html"));

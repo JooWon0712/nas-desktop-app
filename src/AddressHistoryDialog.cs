@@ -36,6 +36,7 @@ namespace NasDesk
         private bool statusIsError;
         private bool layingOut;
         internal ConnectionSettings SelectedConnection { get; private set; }
+        internal Func<ConnectionSettings, bool> ConnectRequested { get; set; }
 
         internal AddressHistoryDialog(AddressHistoryStore store, ConnectionSettings current)
         {
@@ -53,7 +54,7 @@ namespace NasDesk
             ShowIcon = false;
             MaximizeBox = MinimizeBox = false;
             heading = new Label { AutoSize = false, Text = "주소 기록", Font = new Font("Malgun Gothic", 18F, FontStyle.Bold) };
-            subtitle = new Label { AutoSize = false, Text = "주소를 불러온 뒤 Enter 또는 연결로 접속하세요." };
+            subtitle = new Label { AutoSize = false, Text = "목록에서 NAS를 선택한 뒤 ‘선택 NAS 연결’을 누르세요." };
             listHeading = new Label { AutoSize = false, Text = "저장된 주소", Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
             countLabel = new Label { AutoSize = false, TextAlign = ContentAlignment.MiddleRight };
             listFrame = new HistoryFrame { TabIndex = 0 };
@@ -80,7 +81,7 @@ namespace NasDesk
             addButton = new ShellButton { Text = "추가", Glyph = ShellGlyph.None, TabIndex = 6, AccessibleName = "NAS 주소 기록에 추가" };
             removeButton = new ShellButton { Text = "삭제", TabIndex = 7, AccessibleName = "선택한 주소 기록 삭제" };
             closeButton = new ShellButton { Text = "닫기", DialogResult = DialogResult.Cancel, TabIndex = 8 };
-            useButton = new ShellButton { Text = "주소 사용", Glyph = ShellGlyph.ArrowRight, Primary = true, TabIndex = 9, AccessibleName = "선택한 주소를 입력창에 불러오기" };
+            useButton = new ShellButton { Text = "선택 NAS 연결", Glyph = ShellGlyph.ArrowRight, Primary = true, TabIndex = 9, AccessibleName = "선택한 NAS에 연결" };
             inputTips = new ToolTip();
             inputTips.SetToolTip(addNameInput, "예: 집 NAS / 회사 NAS. 비워 두면 호스트명으로 표시합니다.");
             inputTips.SetToolTip(selectedNameInput, "이름을 비우고 저장하면 호스트명으로 표시합니다.");
@@ -182,7 +183,7 @@ namespace NasDesk
                 ReplaceRows(entries, candidate, 0);
                 addressInput.Text = candidate.Url;
                 addNameInput.Text = name;
-                SetStatus("주소를 기록에 저장했습니다. 선택한 주소는 ‘주소 사용’으로 불러올 수 있습니다.", false);
+                SetStatus("주소를 저장하고 선택했습니다. ‘선택 NAS 연결’을 누르면 접속합니다.", false);
             }
             catch (Exception) { SetStatus("주소를 저장하지 못했습니다. 파일 권한과 저장 공간을 확인해 주세요.", true); }
         }
@@ -238,10 +239,29 @@ namespace NasDesk
         {
             HistoryRow selected = historyList.SelectedItem as HistoryRow;
             if (selected == null) return;
-            try { SelectedConnection = Copy(selected.Connection); DialogResult = DialogResult.OK; }
-            catch (ArgumentException) { SetStatus("선택한 주소를 확인해 주세요.", true); }
-            catch (System.IO.InvalidDataException) { SetStatus("선택한 주소의 접속 방식을 확인해 주세요.", true); }
+            ConnectionSettings candidate;
+            try { candidate = Copy(selected.Connection); }
+            catch (ArgumentException) { SetStatus("선택한 주소를 확인해 주세요.", true); return; }
+            catch (System.IO.InvalidDataException) { SetStatus("선택한 주소의 접속 방식을 확인해 주세요.", true); return; }
+            Func<ConnectionSettings, bool> handler = ConnectRequested;
+            if (handler != null)
+            {
+                SelectedConnection = null;
+                try
+                {
+                    if (!handler(Copy(candidate)))
+                    {
+                        if (!statusIsError) SetStatus("NAS 연결 설정을 저장하지 못했습니다. 다시 시도해 주세요.", true);
+                        return;
+                    }
+                }
+                catch (Exception) { SetStatus("NAS 연결 요청을 처리하지 못했습니다. 다시 시도해 주세요.", true); return; }
+            }
+            SelectedConnection = Copy(candidate);
+            DialogResult = DialogResult.OK;
         }
+
+        internal void ShowConnectionError(string message) { SetStatus(message, true); }
 
         private void UpdateActions()
         {

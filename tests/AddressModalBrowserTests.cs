@@ -31,99 +31,122 @@ namespace NasDesk
             store.Add(alternate, "백업 NAS");
             store.Add(original, "메인 NAS");
             string historyFile = File.ReadAllText(historyPath);
-            address.SetAddress(original.Url, original.Kind);
 
             InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
             {
                 check(dialog.Modal && Object.ReferenceEquals(dialog.Owner, window) && !IsWindowEnabled(window.Handle)
-                    && !address.IsEditing && address.Input.ReadOnly && address.AddressText == original.Url,
-                    "Clicking the visible locked address opens an owned history modal without unlocking or changing its address"
-                    + " [modal=" + dialog.Modal + "; ownerSame=" + Object.ReferenceEquals(dialog.Owner, window)
-                    + "; nativeOwnerEnabled=" + IsWindowEnabled(window.Handle) + "; editing=" + address.IsEditing
-                    + "; readOnly=" + address.Input.ReadOnly + "]");
-                window.OpenAddressEditor();
-                typeof(MainWindow).GetMethod("ShowAddressHistory", BindingFlags.Instance | BindingFlags.NonPublic)
-                    .Invoke(window, new object[0]);
-                check(Object.ReferenceEquals(window.HistoryDialog, dialog) && !address.IsEditing
+                    && address.Input.ReadOnly && !address.TypePicker.Enabled && address.AddressText == original.Url,
+                    "Clicking the permanently read-only address opens an owned modal and blocks its owner input");
+                window.ShowAddressHistory();
+                check(Object.ReferenceEquals(window.HistoryDialog, dialog)
                     && Application.OpenForms.Cast<Form>().OfType<AddressHistoryDialog>().Count() == 1,
-                    "A history modal rejects duplicate opening and direct editor activation while it is displayed");
+                    "Repeated history requests cannot open duplicate connection modals");
             });
-            check(window.HistoryDialog == null && !address.IsEditing && address.Input.Visible && address.TypePicker.Visible
-                && address.Input.ReadOnly && File.ReadAllText(settingsPath) == settingsFile
-                && File.ReadAllText(historyPath) == historyFile && core.Source == source,
-                "Canceling address history retains the visible locked address, saved settings, history and current document");
+            check(window.HistoryDialog == null && address.Input.Visible && address.Input.ReadOnly
+                && File.ReadAllText(settingsPath) == settingsFile && File.ReadAllText(historyPath) == historyFile && core.Source == source,
+                "Canceling the connection modal preserves the displayed address, settings, history and current NAS");
 
             InModal(window, delegate { Click(address.Input.Parent); }, delegate(AddressHistoryDialog dialog)
             {
-                check(!address.IsEditing && dialog.Modal,
-                    "The visible address frame also opens the same history modal without entering edit mode");
+                check(dialog.Modal && address.Input.ReadOnly, "The address frame opens the same modal without enabling URL editing");
             });
-            address.Input.Focus();
-            InModal(window, delegate { Command(address, Keys.Enter); }, delegate(AddressHistoryDialog dialog)
+            InModal(window, delegate { Command(window, Keys.Control | Keys.L); }, delegate(AddressHistoryDialog dialog)
             {
-                check(dialog.Modal && !address.IsEditing,
-                    "Enter on the focused read-only address opens history for keyboard users");
+                check(dialog.Modal && address.Input.ReadOnly, "Ctrl+L opens connection history while the main URL remains read-only");
             });
-
-            window.OpenAddressEditor();
-            const string draft = "https://unsaved-modal.test/";
-            address.AddressText = draft;
-            address.Kind = ConnectionKind.SynologyQuickConnect;
-            Click(address.Input);
-            check(window.HistoryDialog == null && address.IsEditing && !address.Input.ReadOnly && address.AddressText == draft,
-                "Explicit address editing allows ordinary caret clicks instead of reopening history");
-            InModal(window, delegate { address.HistoryButton.PerformClick(); }, delegate(AddressHistoryDialog dialog)
+            window.Browser.Focus();
+            KeyEventArgs browserCommand = new KeyEventArgs(Keys.Control | Keys.L);
+            InModal(window, delegate
             {
-                check(dialog.Modal && address.IsEditing && address.AddressText == draft,
-                    "The history action can open a modal while preserving an existing address draft");
+                typeof(Control).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(window.Browser, new object[] { browserCommand });
+                Application.DoEvents();
+            }, delegate(AddressHistoryDialog dialog)
+            {
+                check(dialog.Modal && browserCommand.Handled && browserCommand.SuppressKeyPress && address.Input.ReadOnly,
+                    "The native browser keyboard route opens the modal instead of an outside URL editor");
             });
-            check(address.IsEditing && address.AddressText == draft && address.Kind == ConnectionKind.SynologyQuickConnect
-                && File.ReadAllText(settingsPath) == settingsFile && File.ReadAllText(historyPath) == historyFile && core.Source == source,
-                "Canceling history during editing preserves both draft fields without saving or navigating");
-            Command(address, Keys.Escape);
 
             InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
             {
-                TextBox name = Field<TextBox>(dialog, "selectedNameInput");
-                name.Text = "집 NAS";
+                Field<TextBox>(dialog, "addressInput").Text = "https://unsaved-modal.test/";
+                Field<TextBox>(dialog, "addNameInput").Text = "미저장 NAS";
+                check(address.AddressText == original.Url && address.Input.ReadOnly && core.Source == source,
+                    "Unsubmitted URL and name input inside the modal cannot change the main address or connection");
+            });
+            check(File.ReadAllText(settingsPath) == settingsFile && File.ReadAllText(historyPath) == historyFile,
+                "Canceling unsubmitted modal input does not save a URL or history entry");
+
+            InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
+            {
+                Field<TextBox>(dialog, "selectedNameInput").Text = "집 NAS";
                 Field<ShellButton>(dialog, "renameButton").PerformClick();
             });
             check(store.ReadEntries().First(item => item.Url == original.Url && item.Kind == original.Kind).Name == "집 NAS"
                 && File.ReadAllText(settingsPath) == settingsFile && core.Source == source
                 && await core.ExecuteScriptAsync("document.cookie") == cookies
                 && await core.ExecuteScriptAsync("localStorage.getItem('nas_desk_test')") == storage,
-                "Renaming through the address modal changes only history and retains the NAS connection and login storage");
+                "Renaming inside the modal updates only history and preserves the NAS login storage");
             string renamedHistory = File.ReadAllText(historyPath);
 
-            InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
+            using (FileStream locked = new FileStream(settingsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                ListBox list = Field<ListBox>(dialog, "historyList");
-                int index = Enumerable.Range(0, list.Items.Count).First(item => list.Items[item].ToString().Contains(alternate.Url));
-                list.SelectedIndex = index;
-                Field<ShellButton>(dialog, "useButton").PerformClick();
-            });
-            check(window.HistoryDialog == null && address.IsEditing && address.Input.Visible && !address.Input.ReadOnly
-                && address.ConnectButton.Visible && address.AddressText == alternate.Url && address.Kind == alternate.Kind
-                && File.ReadAllText(settingsPath) == settingsFile && File.ReadAllText(historyPath) == renamedHistory
-                && Object.ReferenceEquals(core, window.Browser.CoreWebView2) && core.Source == source
-                && core.Environment.UserDataFolder == profile,
-                "Using a modal history row fills an editable address and still requires an explicit connection");
-            await SubmitAndWait(core, alternate.Url, delegate { address.ConnectButton.PerformClick(); });
-            check(!address.IsEditing && address.Input.Visible && address.Input.ReadOnly && address.TypePicker.Visible
-                && !address.ConnectButton.Visible && core.Source == alternate.Url
-                && ConnectionSettings.Read(settingsPath).Url == alternate.Url && store.ReadEntries()[0].Name == "백업 NAS",
-                "Connecting a selected history address keeps the URL visible and preserves its NAS name");
+                InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
+                {
+                    SelectRow(dialog, alternate);
+                    Field<ShellButton>(dialog, "useButton").PerformClick();
+                    check(dialog.Visible && dialog.DialogResult == DialogResult.None && dialog.SelectedConnection == null
+                        && Field<Label>(dialog, "statusLabel").Text.Contains("저장하지 못")
+                        && address.Input.ReadOnly && address.AddressText == original.Url && core.Source == source
+                        && File.ReadAllText(settingsPath) == settingsFile && File.ReadAllText(historyPath) == renamedHistory,
+                        "A connection-setting save failure keeps the modal open and leaves the previous connection and history intact");
+                });
+            }
 
-            window.OpenAddressEditor();
-            address.Kind = original.Kind;
-            address.AddressText = original.Url;
-            await SubmitAndWait(core, original.Url, delegate { address.ConnectButton.PerformClick(); });
-            check(address.Input.Visible && address.Input.ReadOnly && !address.IsEditing
-                && ConnectionSettings.Read(settingsPath).Url == original.Url && core.Source == original.Url,
-                "Restoring the original NAS keeps the saved address visible after connection");
+            await SubmitAndWait(core, alternate.Url, delegate
+            {
+                InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
+                {
+                    SelectRow(dialog, alternate);
+                    Field<ShellButton>(dialog, "useButton").PerformClick();
+                });
+            });
+            check(window.HistoryDialog == null && address.Input.ReadOnly && !address.TypePicker.Enabled
+                && address.AddressText == alternate.Url && ConnectionSettings.Read(settingsPath).Url == alternate.Url
+                && store.ReadEntries()[0].Name == "백업 NAS" && Object.ReferenceEquals(core, window.Browser.CoreWebView2)
+                && core.Environment.UserDataFolder == profile,
+                "Connecting a saved modal row immediately applies and loads it while keeping the main address read-only");
+
+            const string added = "https://nas-desk-alternate.test/index.html?modal=new";
+            await SubmitAndWait(core, added, delegate
+            {
+                InModal(window, delegate { Click(address.Input); }, delegate(AddressHistoryDialog dialog)
+                {
+                    Field<TextBox>(dialog, "addressInput").Text = added;
+                    Field<TextBox>(dialog, "addNameInput").Text = "새 NAS";
+                    Field<ShellButton>(dialog, "addButton").PerformClick();
+                    check(address.AddressText == alternate.Url && address.Input.ReadOnly && core.Source == alternate.Url
+                        && Field<ListBox>(dialog, "historyList").SelectedIndex == 0,
+                        "Adding a URL inside the modal selects its saved record without changing the connected NAS");
+                    Field<ShellButton>(dialog, "useButton").PerformClick();
+                });
+            });
+            check(address.AddressText == added && address.Input.ReadOnly && store.ReadEntries()[0].Name == "새 NAS",
+                "A new NAS can be entered, named, saved and connected entirely inside the address history modal");
+
+            await SubmitAndWait(core, original.Url, delegate
+            {
+                InModal(window, delegate { address.HistoryButton.PerformClick(); }, delegate(AddressHistoryDialog dialog)
+                {
+                    SelectRow(dialog, original);
+                    Field<ShellButton>(dialog, "useButton").PerformClick();
+                });
+            });
+            check(address.Input.ReadOnly && address.AddressText == original.Url && core.Source == original.Url,
+                "Returning to the original NAS through history never creates an editable main URL field");
         }
 
-        private static void InModal(MainWindow window, Action trigger, Action<AddressHistoryDialog> inspect)
+        internal static void InModal(MainWindow window, Action trigger, Action<AddressHistoryDialog> inspect)
         {
             Exception failure = null;
             bool observed = false;
@@ -137,9 +160,8 @@ namespace NasDesk
                     {
                         if (DateTime.UtcNow < deadline) return;
                         timer.Stop();
-                        failure = new TimeoutException("Address history modal did not become visible.");
-                        foreach (AddressHistoryDialog open in Application.OpenForms.Cast<Form>().OfType<AddressHistoryDialog>().ToArray())
-                            open.Close();
+                        failure = new TimeoutException("Connection modal did not become visible.");
+                        foreach (AddressHistoryDialog open in Application.OpenForms.Cast<Form>().OfType<AddressHistoryDialog>().ToArray()) open.Close();
                         return;
                     }
                     timer.Stop();
@@ -155,12 +177,10 @@ namespace NasDesk
                         }
                     }
                 };
-                timer.Start();
-                trigger();
-                timer.Stop();
+                timer.Start(); trigger(); timer.Stop();
             }
             if (failure != null) throw failure;
-            if (!observed) throw new Exception("The address action did not open a modal history dialog.");
+            if (!observed) throw new Exception("The address action did not open its connection modal.");
         }
 
         private static T Field<T>(AddressHistoryDialog dialog, string field) where T : class
@@ -168,11 +188,20 @@ namespace NasDesk
             return typeof(AddressHistoryDialog).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(dialog) as T;
         }
 
+        private static void SelectRow(AddressHistoryDialog dialog, ConnectionSettings target)
+        {
+            ListBox list = Field<ListBox>(dialog, "historyList");
+            list.SelectedIndex = Enumerable.Range(0, list.Items.Count).First(index =>
+            {
+                object row = list.Items[index];
+                ConnectionSettings connection = (ConnectionSettings)row.GetType()
+                    .GetField("Connection", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(row);
+                return connection.Url == target.Url && connection.Kind == target.Kind;
+            });
+        }
+
         private static void Click(Control control)
         {
-            // Dispatch the control's normal mouse event without moving the
-            // user's desktop pointer. Native WM_MOUSEUP hit testing depends on
-            // the physical pointer position and is unsuitable for this fixture.
             string mouseEvent = control is TextBox ? "OnMouseClick" : "OnMouseDown";
             typeof(Control).GetMethod(mouseEvent, BindingFlags.Instance | BindingFlags.NonPublic)
                 .Invoke(control, new object[] { new MouseEventArgs(MouseButtons.Left, 1, 5, 5, 0) });
@@ -181,17 +210,13 @@ namespace NasDesk
         private static bool Command(Control control, Keys key)
         {
             Message message = Message.Create(control.Handle, 0x0100, (IntPtr)(key & Keys.KeyCode), IntPtr.Zero);
-            return (bool)control.GetType().GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)
-                .Invoke(control, new object[] { message, key });
+            return (bool)control.GetType().GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(control, new object[] { message, key });
         }
 
         private static async Task SubmitAndWait(CoreWebView2 core, string target, Action submit)
         {
             bool completed = false;
-            EventHandler<CoreWebView2NavigationCompletedEventArgs> handler = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
-            {
-                if (e.IsSuccess && core.Source == target) completed = true;
-            };
+            EventHandler<CoreWebView2NavigationCompletedEventArgs> handler = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e) { if (e.IsSuccess && core.Source == target) completed = true; };
             core.NavigationCompleted += handler;
             try
             {
@@ -199,7 +224,7 @@ namespace NasDesk
                 DateTime deadline = DateTime.UtcNow.AddSeconds(10);
                 while (!completed)
                 {
-                    if (DateTime.UtcNow >= deadline) throw new TimeoutException("History address did not connect.");
+                    if (DateTime.UtcNow >= deadline) throw new TimeoutException("Modal selection did not connect.");
                     await Task.Delay(50);
                 }
             }

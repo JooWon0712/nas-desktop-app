@@ -110,10 +110,9 @@ namespace NasDesk
             MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
             await WaitFor(() => popup.Ready, 10000, "Popup document");
             Check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "Popup shares NAS session");
-            popup.Address.IsEditing = true;
-            Check(!popup.Address.EditingEnabled && !popup.Address.IsEditing && popup.Address.Input.ReadOnly
-                && !popup.Address.TypePicker.Enabled && !popup.Address.LockButton.Enabled,
-                "NAS popups retain a read-only address despite automatic editing in the primary window");
+            Check(!popup.Address.HistoryEnabled && popup.Address.Input.ReadOnly && popup.Address.Input.Visible
+                && !popup.Address.TypePicker.Enabled && !popup.Address.HistoryButton.Enabled,
+                "NAS popups retain a visible read-only address without connection selection controls");
             int before = Int32.Parse(await core.ExecuteScriptAsync("window.ticks"));
             window.Close();
             Check(!window.Visible && !window.IsDisposed && window.TrayVisible, "Real Close hides without disposing WebView2");
@@ -136,7 +135,7 @@ namespace NasDesk
             await ConnectionFailureBrowserTests.RunAsync(output, fixture, Check);
             await BrowserScrollbarTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
-            await AddressAutoEditTests.RunAsync(window, core, uiSettingsPath, Check);
+            await AddressReadOnlyTests.RunAsync(window, core, uiSettingsPath, Check);
             await AddressModalBrowserTests.RunAsync(window, core, uiSettingsPath, Check);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
@@ -150,9 +149,8 @@ namespace NasDesk
             ThemeMode originalMode = NasTheme.Mode;
             string source = core.Source;
             string committed = window.Address.AddressText;
+            ConnectionKind committedKind = window.Address.Kind;
             await core.ExecuteScriptAsync("window.themeChangeMarker='same-document';");
-            window.Address.IsEditing = true;
-            window.Address.AddressText = "https://unsaved.example.test/";
             window.SelectPalette("violet");
             window.SelectMode(ThemeMode.Light);
             Check(AppearanceSettings.Read(uiSettingsPath + ".appearance.json") == "violet"
@@ -163,9 +161,10 @@ namespace NasDesk
                 && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\""
                 && (await core.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"),
                 "Theme change retains the current web document and login storage");
-            Check(window.Address.IsEditing && window.Address.AddressText == "https://unsaved.example.test/"
+            Check(window.Address.Input.ReadOnly && !window.Address.TypePicker.Enabled
+                && window.Address.AddressText == committed && window.Address.Kind == committedKind
                 && ConnectionSettings.Read(uiSettingsPath).Url == committed,
-                "Theme change preserves an unsaved address edit and saved NAS address");
+                "Theme change preserves the read-only address, connection type and saved NAS settings");
             window.SelectMode(ThemeMode.System);
             bool targetDark = !NasTheme.IsDark;
             window.HideToTray();
@@ -176,7 +175,6 @@ namespace NasDesk
                 && await core.ExecuteScriptAsync("window.themeChangeMarker") == "\"same-document\"",
                 "System brightness changes update a hidden tray window without reloading its document or overwriting automatic mode");
             window.RestoreFromTray();
-            window.Address.IsEditing = false;
             window.SelectPalette(originalTheme);
             window.SelectMode(originalMode);
         }
@@ -278,82 +276,47 @@ namespace NasDesk
             System.Drawing.Size originalSize = window.Size;
             window.Size = window.MinimumSize;
             window.PerformLayout();
-            Check(address.Input.Visible && address.TypePicker.Visible && address.Input.ReadOnly
-                && !address.TypePicker.Enabled && !address.ConnectButton.Visible
-                && address.Input.Parent.Right < address.LockButton.Left
+            Check(address.Input.Visible && address.TypePicker.Visible && address.Input.ReadOnly && !address.TypePicker.Enabled
+                && address.HistoryButton.Visible && address.HistoryButton.Enabled
+                && address.Input.Parent.Right < address.HistoryButton.Left
+                && address.Input.Parent.Bottom <= address.ClientSize.Height
                 && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
                 && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width
-                && address.LockButton.Visible && address.HistoryButton.Visible
-                && address.LockButton.Left >= 0 && address.LockButton.Bottom <= address.ClientSize.Height
-                && address.LockButton.Right < address.HistoryButton.Left
-                && address.HistoryButton.Right == address.ClientSize.Width
-                && address.HistoryButton.Bottom <= address.ClientSize.Height,
-                "The always-visible locked address and right-aligned actions fit at minimum window size");
-            address.LockButton.PerformClick();
-            window.PerformLayout();
-            Check(address.Input.Parent.Bottom <= address.ClientSize.Height
-                && address.Input.Visible && address.TypePicker.Visible && address.ConnectButton.Visible
-                && address.Input.Parent.Right < address.LockButton.Left
-                && address.LockButton.Bottom <= address.ClientSize.Height
-                && address.LockButton.Right < address.ConnectButton.Left
-                && address.ConnectButton.Bottom <= address.ClientSize.Height
-                && address.ConnectButton.Right < address.HistoryButton.Left
                 && address.HistoryButton.Right <= address.ClientSize.Width
-                && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
-                && address.Bottom <= address.Parent.ClientSize.Height
-                && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width,
-                "Visible address input, type, cancel, connection and history controls fit at minimum window size");
+                && address.HistoryButton.Bottom <= address.ClientSize.Height,
+                "The read-only address, type and history action fit at minimum window size");
             Check(Math.Abs(address.Input.Top - (address.Input.Parent.ClientSize.Height - address.Input.Height - address.Input.Top)) <= 1,
-                "Address text stays vertically centered at the application DPI");
-            address.IsEditing = false;
+                "Read-only address text stays vertically centered at the application DPI");
             window.Size = originalSize;
             window.PerformLayout();
             string originalSettings = File.ReadAllText(uiSettingsPath);
             string originalPage = core.Source;
             string originalHistory = historySnapshot();
-            Check(!address.IsEditing && address.Input.ReadOnly && !address.TypePicker.Enabled
-                && address.Input.Visible && address.TypePicker.Visible && !address.ConnectButton.Visible
-                && address.LockButton.Visible && address.HistoryButton.Visible
-                && address.Kind == ConnectionKind.DirectHttps && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
-                "Saved connection keeps the address visible and read-only with change and history actions available");
+            Check(address.Input.ReadOnly && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled
+                && address.HistoryEnabled && address.Kind == ConnectionKind.DirectHttps && address.AddressText == originalUrl,
+                "The saved connection is always visible and read-only with history selection available");
 
-            address.IsEditing = true;
-            Check(address.Input.Visible && !address.Input.ReadOnly && address.TypePicker.Visible && address.TypePicker.Enabled
-                && address.ConnectButton.Visible && address.ConnectButton.Enabled,
-                "Explicit editing enables the visible address and type and reveals the connection action");
-            address.AddressText = "https://uncommitted.test/";
-            address.Kind = ConnectionKind.SynologyQuickConnect;
-            address.IsEditing = false;
-            Check(address.Input.ReadOnly && address.Input.Visible && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
-                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
-                && historySnapshot() == originalHistory,
-                "Cancelling editing restores the visible address and type without saving, recording or navigating");
-
-            address.IsEditing = true;
-            address.AddressText = "https://cancelled.test/";
-            address.Kind = ConnectionKind.SynologyQuickConnect;
-            Message escape = Message.Create(address.Input.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
-            bool escapeHandled = address.PreProcessMessage(ref escape);
-            Check(escapeHandled && !address.IsEditing && address.Kind == ConnectionKind.DirectHttps
-                && address.Input.Visible && address.TypePicker.Visible && !address.ConnectButton.Visible
-                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings
-                && core.Source == originalPage && historySnapshot() == originalHistory,
-                "Local Escape command cancels both address and connection type");
-
-            address.IsEditing = true;
-            address.AddressText = "http://nas-desk-alternate.test/index.html";
-            address.ConnectButton.PerformClick();
-            Check(address.IsEditing && address.Input.Visible && File.ReadAllText(uiSettingsPath) == originalSettings
-                && core.Source == originalPage && historySnapshot() == originalHistory,
-                "HTTP address submission preserves saved address, history and current page");
-            address.AddressText = "https://user:secret@nas-desk-alternate.test/index.html";
-            address.ConnectButton.PerformClick();
-            Check(address.IsEditing && address.Input.Visible && File.ReadAllText(uiSettingsPath) == originalSettings
-                && core.Source == originalPage && historySnapshot() == originalHistory,
-                "Credentials in address submission are rejected without changing settings, history or document");
+            Check(!window.ApplyConnection(null) && File.ReadAllText(uiSettingsPath) == originalSettings
+                && core.Source == originalPage && historySnapshot() == originalHistory && address.AddressText == originalUrl,
+                "An absent connection selection cannot change the saved address, history or NAS document");
+            Check(!window.ApplyConnection(new ConnectionSettings { Url = "http://nas-desk-alternate.test/index.html", Type = "https" })
+                && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
+                && historySnapshot() == originalHistory && address.AddressText == originalUrl,
+                "HTTP connection submission preserves the displayed address, saved settings, history and current page");
+            Check(!window.ApplyConnection(new ConnectionSettings { Url = "https://user:secret@nas-desk-alternate.test/index.html", Type = "https" })
+                && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
+                && historySnapshot() == originalHistory && address.AddressText == originalUrl,
+                "Credentials in a selected connection are rejected without changing settings, history or document");
+            Check(!window.ApplyConnection(new ConnectionSettings { Url = "https://nas-desk-alternate.test/index.html", Type = "invalid-type" })
+                && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
+                && historySnapshot() == originalHistory && address.Kind == ConnectionKind.DirectHttps,
+                "An invalid connection type cannot replace the saved NAS or its read-only address");
 
             const string alternateUrl = "https://nas-desk-alternate.test/index.html";
             core.SetVirtualHostNameToFolderMapping("nas-desk-alternate.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
+            ConnectionSettings alternate;
+            ConnectionSettings.TryCreate(alternateUrl, ConnectionKind.DirectHttps, out alternate);
+            history.Add(alternate, "Selected fixture NAS");
             bool alternateLoaded = false;
             EventHandler<CoreWebView2NavigationCompletedEventArgs> navigated = delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
             {
@@ -362,38 +325,33 @@ namespace NasDesk
             core.NavigationCompleted += navigated;
             try
             {
-                address.AddressText = alternateUrl;
-                address.ConnectButton.PerformClick();
-                await WaitFor(() => alternateLoaded, 10000, "Updated NAS address loads its new HTTPS origin");
-                Check(ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
+                bool applied = window.ApplyConnection(alternate);
+                await WaitFor(() => alternateLoaded && core.DocumentTitle == "NAS Desk local fixture", 10000, "Selected NAS address loads its HTTPS origin");
+                Check(applied && ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
                     && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
-                    && !address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled
-                    && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled && !address.ConnectButton.Visible
-                    && history.Read().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps)
-                    && core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture",
-                    "Valid address submission saves isolated settings and history, locks the visible address and loads the new HTTPS origin");
+                    && address.Input.ReadOnly && address.Input.Visible && address.TypePicker.Visible && !address.TypePicker.Enabled
+                    && history.ReadEntries().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps
+                        && item.Name == "Selected fixture NAS") && core.Source == alternateUrl,
+                    "An explicit valid connection saves settings, preserves its NAS name and updates the read-only address");
             }
             finally { core.NavigationCompleted -= navigated; }
 
             const string quickConnectUrl = "https://ui-type-fixture.quickconnect.to/index.html";
             core.SetVirtualHostNameToFolderMapping("ui-type-fixture.quickconnect.to", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
-            address.IsEditing = true;
-            address.Kind = ConnectionKind.SynologyQuickConnect;
-            address.AddressText = quickConnectUrl;
-            address.ConnectButton.PerformClick();
-            await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Explicit QuickConnect type fixture");
-            Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
-                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing && address.Input.Visible
+            ConnectionSettings quickConnect;
+            ConnectionSettings.TryCreate(quickConnectUrl, ConnectionKind.SynologyQuickConnect, out quickConnect);
+            bool quickConnectApplied = window.ApplyConnection(quickConnect);
+            await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Selected QuickConnect type fixture");
+            Check(quickConnectApplied && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
+                && address.Kind == ConnectionKind.SynologyQuickConnect && address.Input.ReadOnly && address.Input.Visible
                 && history.Read().Any(item => item.Url == quickConnectUrl && item.Kind == ConnectionKind.SynologyQuickConnect),
-                "Connection editor applies and saves an explicitly selected QuickConnect type");
-            address.IsEditing = true;
-            address.Kind = ConnectionKind.DirectHttps;
-            address.AddressText = alternateUrl;
-            address.ConnectButton.PerformClick();
+                "A selected QuickConnect connection persists its explicit type in the read-only address bar");
+            bool directApplied = window.ApplyConnection(alternate);
             await WaitFor(() => core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Return to direct HTTPS fixture");
-            Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
-                && address.Kind == ConnectionKind.DirectHttps,
-                "Switching from QuickConnect back to a generic HTTPS NAS replaces the saved type");
+            Check(directApplied && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
+                && address.Kind == ConnectionKind.DirectHttps && address.Input.ReadOnly && !address.TypePicker.Enabled
+                && history.ReadEntries()[0].Name == "Selected fixture NAS",
+                "Switching back to a generic HTTPS NAS preserves its name and never enables direct address editing");
         }
     }
 }

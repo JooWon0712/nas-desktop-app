@@ -161,6 +161,60 @@ namespace NasDesk
                     && File.ReadAllText(legacyPath) == legacy,
                     "Legacy history without NAS names displays host names and remains unchanged on opening");
             }
+
+            string connectionPath = Path.Combine(folder, "connection.json");
+            current.Save(connectionPath);
+            string connectionBefore = File.ReadAllText(connectionPath);
+            string historyBefore = File.ReadAllText(path);
+            using (AddressHistoryDialog dialog = new AddressHistoryDialog(store, current))
+            {
+                dialog.Opacity = 0;
+                dialog.Show();
+                ListBox list = Field<ListBox>(dialog, "historyList");
+                TextBox input = Field<TextBox>(dialog, "addressInput");
+                TextBox newName = Field<TextBox>(dialog, "addNameInput");
+                TextBox selectedName = Field<TextBox>(dialog, "selectedNameInput");
+                Label status = Field<Label>(dialog, "statusLabel");
+                input.Text = "https://unsaved-draft.test/";
+                newName.Text = "추가할 이름 초안";
+                selectedName.Text = "기존 이름 편집 초안";
+                string rows = Rows(list);
+                int calls = 0;
+                dialog.ConnectRequested = delegate(ConnectionSettings connection)
+                {
+                    calls++;
+                    dialog.ShowConnectionError("연결 설정 저장이 거부되었습니다.");
+                    return false;
+                };
+                Field<ShellButton>(dialog, "useButton").PerformClick();
+                check(calls == 1 && dialog.Visible && !dialog.IsDisposed && dialog.DialogResult == DialogResult.None
+                    && dialog.SelectedConnection == null && list.SelectedIndex == 0 && Rows(list) == rows
+                    && input.Text == "https://unsaved-draft.test/" && newName.Text == "추가할 이름 초안"
+                    && selectedName.Text == "기존 이름 편집 초안" && status.Text == "연결 설정 저장이 거부되었습니다."
+                    && File.ReadAllText(connectionPath) == connectionBefore && File.ReadAllText(path) == historyBefore,
+                    "A rejected connection callback preserves the open dialog, drafts, selection and saved settings with its detailed error");
+            }
+            using (AddressHistoryDialog dialog = new AddressHistoryDialog(store, current))
+            {
+                dialog.Opacity = 0;
+                dialog.Show();
+                int calls = 0;
+                ConnectionSettings received = null;
+                dialog.ConnectRequested = delegate(ConnectionSettings connection)
+                {
+                    calls++;
+                    received = connection;
+                    connection.Url = "https://callback-mutated.test/";
+                    return true;
+                };
+                Field<ShellButton>(dialog, "useButton").PerformClick();
+                check(calls == 1 && received != null && dialog.DialogResult == DialogResult.OK
+                    && dialog.SelectedConnection != null && !Object.ReferenceEquals(received, dialog.SelectedConnection)
+                    && dialog.SelectedConnection.Kind == ConnectionKind.SynologyQuickConnect
+                    && dialog.SelectedConnection.Url == "https://team-nas.quickconnect.to/"
+                    && File.ReadAllText(connectionPath) == connectionBefore && File.ReadAllText(path) == historyBefore,
+                    "An accepted connection callback is invoked once and returns an independent normalized selection without changing saved files");
+            }
         }
 
         private static T Field<T>(object instance, string name) where T : class

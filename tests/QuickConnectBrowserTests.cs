@@ -100,13 +100,10 @@ namespace NasDesk
                 await WaitFor(() => delayedStarted, "Delayed endpoint verification started");
                 check(core.Source == endpoint, "Pending endpoint verification cannot navigate before approval");
 
-                window.Address.IsEditing = true;
-                window.Address.Kind = ConnectionKind.DirectHttps;
-                window.Address.AddressText = replacement;
-                window.Address.ConnectButton.PerformClick();
-                await WaitFor(() => core.Source == replacement && core.DocumentTitle == "Replacement NAS fixture", "Address editor replaces the connection during verification");
-                check(ConnectionSettings.Read(settingsPath).Url == replacement && !window.Address.IsEditing,
-                    "Address editor saves and loads a replacement NAS while an old verification is pending");
+                bool replaced = window.ApplyConnection(new ConnectionSettings { Url = replacement, Type = "https" });
+                await WaitFor(() => core.Source == replacement && core.DocumentTitle == "Replacement NAS fixture", "Connection selection replaces the NAS during verification");
+                check(replaced && ConnectionSettings.Read(settingsPath).Url == replacement && window.Address.Input.ReadOnly,
+                    "Connection selection saves and loads a replacement NAS while keeping its displayed address read-only");
 
                 int staleAttempts = 0;
                 core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)

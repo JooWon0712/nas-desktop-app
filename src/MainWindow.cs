@@ -132,9 +132,8 @@ namespace NasDesk
             refresh.Compact = true;
             Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4) };
             Address.SetAddress(settings.Url, settings.Kind);
-            Address.ConnectRequested += delegate { ApplyAddress(); };
             Address.HistoryRequested += delegate { ShowAddressHistory(); };
-            if (popup) Address.EditingEnabled = false;
+            if (popup) Address.HistoryEnabled = false;
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
             actions.Controls.Add(home, 0, 0);
@@ -150,12 +149,9 @@ namespace NasDesk
             errorPanel = new ConnectionFailureView { Dock = DockStyle.Fill, Visible = false };
             errorPanel.RetryRequested += async delegate { await ReconnectAsync(); };
             errorPanel.EditAddressButton.Enabled = !popup;
-            errorPanel.EditAddressRequested += delegate
-            {
-                if (!Address.EditingEnabled) return;
-                Address.IsEditing = true;
-                status.Text = "접속 주소와 포트를 수정한 뒤 Enter 또는 연결을 눌러 주세요.";
-            };
+            errorPanel.EditAddressButton.Text = "주소 선택";
+            errorPanel.EditAddressButton.AccessibleName = "주소 기록에서 연결할 NAS 선택";
+            errorPanel.EditAddressRequested += delegate { ShowAddressHistory(); };
             viewport = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Border, Padding = new Padding(1) };
             Panel workspace = new Panel { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Padding = new Padding(20, 0, 20, 0) };
             viewport.Controls.Add(Browser);
@@ -312,7 +308,7 @@ namespace NasDesk
                 e.SuppressKeyPress = true;
                 // WinForms forwards native WebView accelerator keys here. Queue
                 // focus changes until the synchronous browser callback returns.
-                try { BeginInvoke((Action)OpenAddressEditor); }
+                try { BeginInvoke((Action)ShowAddressHistory); }
                 catch (InvalidOperationException) { }
             };
             return browser;
@@ -336,43 +332,22 @@ namespace NasDesk
             NasTheme.RefreshSystemAppearance();
         }
 
-        internal void OpenAddressEditor()
+        internal void ShowAddressHistory()
         {
-            if (popup || !Address.EditingEnabled || historyDialogOpen || IsDisposed || Disposing || exitRequested) return;
-            Address.IsEditing = true;
-        }
-
-        internal bool UseHistoryAddress(ConnectionSettings candidate)
-        {
-            if (popup || !Address.EditingEnabled || candidate == null || IsDisposed || Disposing || exitRequested) return false;
-            ConnectionSettings normalized;
-            try
-            {
-                if (!ConnectionSettings.TryCreate(candidate.Url, candidate.Kind, out normalized)) return false;
-            }
-            catch (System.IO.InvalidDataException) { return false; }
-            Address.IsEditing = true;
-            Address.Kind = normalized.Kind;
-            Address.AddressText = normalized.Url;
-            Address.Input.Focus();
-            Address.Input.SelectAll();
-            status.Text = "기록의 주소를 입력했습니다. Enter 또는 연결을 누르면 접속합니다.";
-            return true;
-        }
-
-        private void ShowAddressHistory()
-        {
-            if (popup || !Address.EditingEnabled || historyDialogOpen || exitRequested || IsDisposed || Disposing) return;
+            if (popup || !Address.HistoryEnabled || historyDialogOpen || exitRequested || IsDisposed || Disposing) return;
             historyDialogOpen = true;
             try
             {
-                ConnectionSettings initial = settings;
-                ConnectionSettings draft;
-                if (Address.IsEditing && ConnectionSettings.TryCreate(Address.AddressText, Address.Kind, out draft)) initial = draft;
-                using (AddressHistoryDialog dialog = new AddressHistoryDialog(historyStore, initial))
+                using (AddressHistoryDialog dialog = new AddressHistoryDialog(historyStore, settings))
                 {
                     historyDialog = dialog;
-                    if (dialog.ShowDialog(this) == DialogResult.OK) UseHistoryAddress(dialog.SelectedConnection);
+                    dialog.ConnectRequested = delegate(ConnectionSettings candidate)
+                    {
+                        bool applied = ApplyConnection(candidate);
+                        if (!applied) dialog.ShowConnectionError(status.Text);
+                        return applied;
+                    };
+                    dialog.ShowDialog(this);
                 }
             }
             finally { historyDialog = null; historyDialogOpen = false; }
@@ -380,9 +355,9 @@ namespace NasDesk
 
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)
         {
-            if (keyData == (Keys.Control | Keys.L) && !popup && Address.EditingEnabled)
+            if (keyData == (Keys.Control | Keys.L) && !popup && Address.HistoryEnabled)
             {
-                OpenAddressEditor();
+                ShowAddressHistory();
                 return true;
             }
             return base.ProcessCmdKey(ref message, keyData);
@@ -667,7 +642,7 @@ namespace NasDesk
             SetBrowserVisibility(false);
             errorPanel.Visible = true;
             errorPanel.BringToFront();
-            status.Text = "연결 확인 필요 · 주소 수정 / 다시 연결";
+            status.Text = "연결 확인 필요 · 주소 선택 / 다시 연결";
             SetConnectionState("연결 확인", NasTheme.Warning);
         }
 
@@ -706,45 +681,51 @@ namespace NasDesk
             else Browser.Reload();
         }
 
-        private async void ApplyAddress()
+        internal bool ApplyConnection(ConnectionSettings requested)
         {
-            string value = Address.AddressText.Trim();
+            if (popup || exitRequested || IsDisposed || Disposing) return false;
             ConnectionSettings candidate;
-            if (!ConnectionSettings.TryCreate(value, Address.Kind, out candidate))
-            {
-                status.Text = Address.Kind == ConnectionKind.SynologyQuickConnect
-                    ? "Synology QuickConnect ID 또는 quickconnect.to/ID 주소를 입력하세요."
-                    : "NAS의 HTTPS 관리 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
-                Address.Input.Focus();
-                return;
-            }
-            string address = candidate.Url;
             try
             {
+                if (requested == null || !ConnectionSettings.TryCreate(requested.Url, requested.Kind, out candidate))
+                    throw new ArgumentException("NAS의 HTTPS 관리 주소 또는 QuickConnect ID와 접속 방식을 확인해 주세요.");
                 candidate.Save(settingsPath);
-                foreach (MainWindow child in children.ToArray()) child.RequestExit();
-                connection.Dispose();
-                connection = new ConnectionSession(address, candidate.Kind);
-                pendingNavigationUrl = null;
-                navigationCheck = null;
-                navigationRequest++;
-                lastLoadedUrl = null;
-                activeNavigationId = 0;
-                settings.Url = address;
-                settings.Type = candidate.Type;
-                historyWarning = null;
-                status.ToolTipText = String.Empty;
-                try { historyStore.Add(candidate); }
-                catch (Exception historyError)
-                {
-                    historyWarning = " · 주소 기록 저장 실패";
-                    status.ToolTipText = "주소 기록을 저장하지 못했습니다: " + historyError.Message;
-                }
-                Address.SetAddress(address, candidate.Kind);
-                if (Ready) NavigateHome();
-                else await ReconnectAsync();
             }
-            catch (Exception error) { status.Text = "주소를 저장하지 못했습니다: " + error.Message; }
+            catch (Exception error) { status.Text = "연결 주소를 저장하지 못했습니다: " + error.Message; return false; }
+            string address = candidate.Url;
+            foreach (MainWindow child in children.ToArray()) child.RequestExit();
+            connection.Dispose();
+            connection = new ConnectionSession(address, candidate.Kind);
+            pendingNavigationUrl = null;
+            navigationCheck = null;
+            navigationRequest++;
+            lastLoadedUrl = null;
+            activeNavigationId = 0;
+            settings.Url = address;
+            settings.Type = candidate.Type;
+            historyWarning = null;
+            status.ToolTipText = String.Empty;
+            try { historyStore.Add(candidate); }
+            catch (Exception historyError)
+            {
+                historyWarning = " · 주소 기록 저장 실패";
+                status.ToolTipText = "주소 기록을 저장하지 못했습니다: " + historyError.Message;
+            }
+            Address.SetAddress(address, candidate.Kind);
+            try
+            {
+                if (Ready) NavigateHome();
+                else ReconnectSelection();
+            }
+            catch (InvalidOperationException) { ShowError("웹 화면을 준비하지 못했습니다. 다시 연결을 눌러 주세요."); }
+            catch (System.Runtime.InteropServices.COMException) { ShowError("웹 화면을 준비하지 못했습니다. 다시 연결을 눌러 주세요."); }
+            return true;
+        }
+
+        private async void ReconnectSelection()
+        {
+            try { await ReconnectAsync(); }
+            catch (Exception error) { if (!IsDisposed && !exitRequested) ShowError("웹 화면을 준비하지 못했습니다: " + error.Message); }
         }
 
         private void OpenExternal(string value, bool confirm)
