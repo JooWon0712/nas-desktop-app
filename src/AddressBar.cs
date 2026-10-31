@@ -10,10 +10,14 @@ namespace NasDesk
         private string committedUrl = String.Empty;
         private ConnectionKind committedKind = ConnectionKind.DirectHttps;
         private readonly Panel inputFrame;
-        internal readonly TextBox Input;
+        internal readonly AddressInput Input;
         internal readonly ConnectionTypePicker TypePicker;
-        internal readonly CheckBox EditSwitch;
+        internal readonly AddressLockButton LockButton;
         internal readonly ShellButton ConnectButton;
+        private readonly ToolTip toolTips = new ToolTip();
+        private bool editing;
+        private bool editingEnabled = true;
+        private bool applyingAddress;
         internal event EventHandler ConnectRequested;
 
         internal string AddressText
@@ -24,8 +28,19 @@ namespace NasDesk
 
         internal bool IsEditing
         {
-            get { return EditSwitch.Checked; }
-            set { EditSwitch.Checked = value; }
+            get { return editing; }
+            set { if (value) BeginEditing(true, true); else RestoreCommittedAddress(); }
+        }
+
+        internal bool EditingEnabled
+        {
+            get { return editingEnabled; }
+            set
+            {
+                editingEnabled = value;
+                if (!value) RestoreCommittedAddress();
+                else UpdateEditingControls();
+            }
         }
 
         internal ConnectionKind Kind
@@ -63,22 +78,29 @@ namespace NasDesk
                     e.Graphics.DrawPath(pen, border);
                 }
             };
-            TypePicker = new ConnectionTypePicker { Enabled = false, TabIndex = 0 };
-            Input = new TextBox { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 1 };
+            inputFrame.MouseDown += delegate(object sender, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) BeginEditing(true, true);
+            };
+            TypePicker = new ConnectionTypePicker { TabIndex = 0 };
+            Input = new AddressInput { BorderStyle = BorderStyle.None, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, ReadOnly = true, Font = new Font("Segoe UI", 10F), AccessibleName = "NAS 주소", TabIndex = 1 };
+            Input.EditRequested += delegate { BeginEditing(false, true); };
+            TypePicker.EditRequested += delegate { BeginEditing(false, false); };
             inputFrame.Controls.Add(TypePicker);
             inputFrame.Controls.Add(Input);
             inputFrame.Resize += delegate { LayoutInput(); };
             Input.FontChanged += delegate { LayoutInput(); };
-            EditSwitch = new AddressEditSwitch { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0), Text = "주소 수정", AccessibleName = "주소 수정", TabIndex = 1 };
+            LockButton = new AddressLockButton { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0), TabIndex = 1 };
             ConnectButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
-            EditSwitch.CheckedChanged += delegate { ApplyEditing(); };
+            LockButton.Click += delegate { IsEditing = !IsEditing; };
             ConnectButton.Click += delegate { RequestConnection(); };
             layout.Controls.Add(inputFrame, 0, 0);
-            layout.Controls.Add(EditSwitch, 1, 0);
+            layout.Controls.Add(LockButton, 1, 0);
             layout.Controls.Add(ConnectButton, 2, 0);
             Controls.Add(layout);
             ResumeLayout(true);
             LayoutInput();
+            UpdateEditingControls();
         }
 
         private void LayoutInput()
@@ -99,15 +121,43 @@ namespace NasDesk
             LayoutInput();
         }
 
-        private void ApplyEditing()
+        private void BeginEditing(bool focusInput, bool selectAll)
+        {
+            if (!editingEnabled || applyingAddress) return;
+            if (!editing)
+            {
+                editing = true;
+                UpdateEditingControls();
+            }
+            if (focusInput) Input.Focus();
+            if (selectAll) Input.SelectAll();
+        }
+
+        private void UpdateEditingControls()
         {
             Input.ReadOnly = !IsEditing;
             Input.ForeColor = IsEditing ? NasTheme.Text : NasTheme.Muted;
             ConnectButton.Enabled = IsEditing;
-            TypePicker.Enabled = IsEditing;
-            if (IsEditing) { Input.Focus(); Input.SelectAll(); }
-            else { Input.Text = committedUrl; TypePicker.Kind = committedKind; }
+            TypePicker.Enabled = editingEnabled;
+            LockButton.Enabled = editingEnabled;
+            LockButton.Editing = IsEditing;
+            toolTips.SetToolTip(LockButton, IsEditing ? "변경을 취소하고 주소를 잠급니다 (Esc)." : "주소 편집 상태입니다. 주소를 클릭하거나 이 버튼을 누르면 편집합니다.");
+            toolTips.SetToolTip(Input, IsEditing ? "Enter로 연결 · Esc로 변경 취소" : "주소를 클릭하면 편집할 수 있습니다.");
             inputFrame.Invalidate();
+        }
+
+        private void RestoreCommittedAddress()
+        {
+            applyingAddress = true;
+            try
+            {
+                editing = false;
+                Input.Text = committedUrl;
+                Input.ClearUndo();
+                TypePicker.Kind = committedKind;
+                UpdateEditingControls();
+            }
+            finally { applyingAddress = false; }
         }
 
         internal void SetAddress(string value)
@@ -119,10 +169,7 @@ namespace NasDesk
         {
             committedUrl = value ?? String.Empty;
             committedKind = kind;
-            EditSwitch.Checked = false;
-            Input.Text = committedUrl;
-            TypePicker.Kind = committedKind;
-            ApplyEditing();
+            RestoreCommittedAddress();
         }
 
         internal void RefreshTheme()
@@ -134,8 +181,8 @@ namespace NasDesk
             TypePicker.BackColor = NasTheme.Surface;
             TypePicker.ForeColor = NasTheme.Text;
             TypePicker.Invalidate();
-            EditSwitch.BackColor = NasTheme.Background;
-            EditSwitch.ForeColor = NasTheme.Text;
+            LockButton.BackColor = NasTheme.Surface;
+            LockButton.ForeColor = NasTheme.Text;
             ConnectButton.BackColor = NasTheme.Surface;
             ConnectButton.ForeColor = NasTheme.Text;
             Invalidate(true);
@@ -154,40 +201,11 @@ namespace NasDesk
             if (keyData == Keys.Enter && IsEditing && Input.ContainsFocus) { RequestConnection(); return true; }
             return base.ProcessCmdKey(ref message, keyData);
         }
-    }
 
-    internal sealed class AddressEditSwitch : CheckBox
-    {
-        internal AddressEditSwitch()
+        protected override void Dispose(bool disposing)
         {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            AutoSize = false;
-            Cursor = Cursors.Hand;
-            BackColor = NasTheme.Background;
-            ForeColor = NasTheme.Text;
-        }
-
-        protected override void OnCheckedChanged(EventArgs e) { base.OnCheckedChanged(e); Invalidate(); }
-        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
-        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.Clear(BackColor);
-            float scale = e.Graphics.DpiX / 96F;
-            int toggleWidth = (int)(42 * scale), toggleHeight = (int)(22 * scale);
-            Rectangle toggle = new Rectangle(Math.Max(0, Width - toggleWidth - (int)(2 * scale)), (Height - toggleHeight) / 2, toggleWidth, toggleHeight);
-            Color active = SystemInformation.HighContrast ? SystemColors.Highlight : NasTheme.Accent;
-            Color inactive = SystemInformation.HighContrast ? SystemColors.ControlDark : NasTheme.Border;
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using (GraphicsPath shape = NasTheme.RoundRect(toggle, toggleHeight / 2F))
-            using (SolidBrush track = new SolidBrush(Checked ? active : inactive)) e.Graphics.FillPath(track, shape);
-            int inset = Math.Max(2, (int)(3 * scale)), knob = toggleHeight - inset * 2;
-            using (SolidBrush dot = new SolidBrush(Checked ? NasTheme.AccentText : NasTheme.Text))
-                e.Graphics.FillEllipse(dot, Checked ? toggle.Right - inset - knob : toggle.Left + inset, toggle.Top + inset, knob, knob);
-            Rectangle label = new Rectangle(0, 0, Math.Max(0, toggle.Left - (int)(7 * scale)), Height);
-            TextRenderer.DrawText(e.Graphics, Text, Font, label, Enabled ? ForeColor : NasTheme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Right | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
-            if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), ForeColor, BackColor);
+            if (disposing) toolTips.Dispose();
+            base.Dispose(disposing);
         }
     }
 }

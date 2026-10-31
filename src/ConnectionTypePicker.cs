@@ -13,6 +13,7 @@ namespace NasDesk
         private ConnectionKind kind;
         private bool hover;
         internal event EventHandler KindChanged;
+        internal event EventHandler EditRequested;
 
         internal ConnectionKind Kind
         {
@@ -74,6 +75,8 @@ namespace NasDesk
         private void ShowMenu()
         {
             if (!Enabled || IsDisposed) return;
+            EventHandler handler = EditRequested;
+            if (handler != null) handler(this, EventArgs.Empty);
             menu.Font = Font;
             menu.Show(this, new Point(0, Height + 3));
         }

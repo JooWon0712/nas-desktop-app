@@ -124,7 +124,7 @@ namespace NasDesk
             Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4) };
             Address.SetAddress(settings.Url, settings.Kind);
             Address.ConnectRequested += delegate { ApplyAddress(); };
-            if (popup) Address.EditSwitch.Enabled = false;
+            if (popup) Address.EditingEnabled = false;
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
             actions.Controls.Add(home, 0, 0);

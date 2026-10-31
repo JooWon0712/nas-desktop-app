@@ -107,6 +107,10 @@ namespace NasDesk
             MainWindow popup = Application.OpenForms.Cast<Form>().OfType<MainWindow>().First(w => w != window);
             await WaitFor(() => popup.Ready, 10000, "Popup document");
             Check((await popup.Browser.CoreWebView2.ExecuteScriptAsync("document.cookie")).Contains("nas_desk_test=persisted"), "Popup shares NAS session");
+            popup.Address.IsEditing = true;
+            Check(!popup.Address.EditingEnabled && !popup.Address.IsEditing && popup.Address.Input.ReadOnly
+                && !popup.Address.TypePicker.Enabled && !popup.Address.LockButton.Enabled,
+                "NAS popups retain a read-only address despite automatic editing in the primary window");
             int before = Int32.Parse(await core.ExecuteScriptAsync("window.ticks"));
             window.Close();
             Check(!window.Visible && !window.IsDisposed && window.TrayVisible, "Real Close hides without disposing WebView2");
@@ -127,6 +131,7 @@ namespace NasDesk
             await QuickConnectBrowserTests.RunAsync(output, fixture, Check);
             await GenericNasBrowserTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
+            await AddressAutoEditTests.RunAsync(window, core, uiSettingsPath, Check);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);
             window.RequestExit();
@@ -256,20 +261,20 @@ namespace NasDesk
             window.Size = window.MinimumSize;
             window.PerformLayout();
             Check(address.Input.Parent.Bottom <= address.ClientSize.Height
-                && address.EditSwitch.Bottom <= address.ClientSize.Height
+                && address.LockButton.Bottom <= address.ClientSize.Height
                 && address.ConnectButton.Bottom <= address.ClientSize.Height
                 && address.ConnectButton.Right <= address.ClientSize.Width
                 && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
                 && address.Bottom <= address.Parent.ClientSize.Height
                 && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width,
-                "Address input, switch and connection button fit at minimum window size");
+                "Address input, lock and connection button fit at minimum window size");
             Check(Math.Abs(address.Input.Top - (address.Input.Parent.ClientSize.Height - address.Input.Height - address.Input.Top)) <= 1,
                 "Address text stays vertically centered at the application DPI");
             window.Size = originalSize;
             window.PerformLayout();
             string originalSettings = File.ReadAllText(uiSettingsPath);
             string originalPage = core.Source;
-            Check(!address.IsEditing && address.Input.ReadOnly && !address.TypePicker.Enabled
+            Check(!address.IsEditing && address.Input.ReadOnly && address.TypePicker.Enabled
                 && address.Kind == ConnectionKind.DirectHttps && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
                 "Address starts read-only with connection action disabled");
 
@@ -278,7 +283,7 @@ namespace NasDesk
             address.AddressText = "https://uncommitted.test/";
             address.Kind = ConnectionKind.SynologyQuickConnect;
             address.IsEditing = false;
-            Check(address.Input.ReadOnly && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
+            Check(address.Input.ReadOnly && address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
                 && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
                 "Address edit OFF discards draft address and type without saving or navigating");
 
