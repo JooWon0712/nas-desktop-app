@@ -27,6 +27,8 @@ namespace NasDesk
         private ThemePalette appliedPalette;
         internal readonly AddressBar Address;
         private readonly string settingsPath;
+        private readonly AddressHistoryStore historyStore;
+        private string historyWarning;
         private readonly ConnectionFailureView errorPanel;
         private bool failureShown;
         private ulong activeNavigationId;
@@ -71,6 +73,7 @@ namespace NasDesk
             this.testMode = testMode;
             this.popup = popup;
             this.settingsPath = settingsPath;
+            historyStore = new AddressHistoryStore(testMode ? settingsPath + ".history.json" : Program.HistoryPath);
             appliedPalette = NasTheme.Current;
             connection = session ?? new ConnectionSession(settings.Url, settings.Kind);
             Text = Program.AppName;
@@ -127,6 +130,7 @@ namespace NasDesk
             Address = new AddressBar { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4) };
             Address.SetAddress(settings.Url, settings.Kind);
             Address.ConnectRequested += delegate { ApplyAddress(); };
+            Address.HistoryRequested += delegate { ShowAddressHistory(); };
             if (popup) Address.EditingEnabled = false;
             toolTips.SetToolTip(home, "NAS 홈");
             toolTips.SetToolTip(refresh, "새로 고침");
@@ -295,9 +299,20 @@ namespace NasDesk
             connectionBadge.SetStatus(text, color);
         }
 
-        private static WebView2 CreateBrowser()
+        private WebView2 CreateBrowser()
         {
-            return new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = NasTheme.Surface };
+            WebView2 browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = NasTheme.Surface };
+            browser.KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.KeyData != (Keys.Control | Keys.L) || popup || exitRequested || IsDisposed) return;
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                // WinForms forwards native WebView accelerator keys here. Queue
+                // focus changes until the synchronous browser callback returns.
+                try { BeginInvoke((Action)OpenAddressEditor); }
+                catch (InvalidOperationException) { }
+            };
+            return browser;
         }
 
         protected override void WndProc(ref Message message)
@@ -316,6 +331,50 @@ namespace NasDesk
         {
             base.OnActivated(e);
             NasTheme.RefreshSystemAppearance();
+        }
+
+        internal void OpenAddressEditor()
+        {
+            if (popup || !Address.EditingEnabled || IsDisposed || Disposing || exitRequested) return;
+            Address.IsEditing = true;
+        }
+
+        internal bool UseHistoryAddress(ConnectionSettings candidate)
+        {
+            if (popup || !Address.EditingEnabled || candidate == null || IsDisposed || Disposing || exitRequested) return false;
+            ConnectionSettings normalized;
+            try
+            {
+                if (!ConnectionSettings.TryCreate(candidate.Url, candidate.Kind, out normalized)) return false;
+            }
+            catch (System.IO.InvalidDataException) { return false; }
+            Address.IsEditing = true;
+            Address.Kind = normalized.Kind;
+            Address.AddressText = normalized.Url;
+            Address.Input.Focus();
+            Address.Input.SelectAll();
+            status.Text = "기록의 주소를 입력했습니다. Enter 또는 연결을 누르면 접속합니다.";
+            return true;
+        }
+
+        private void ShowAddressHistory()
+        {
+            if (popup || !Address.EditingEnabled || exitRequested) return;
+            ConnectionSettings initial = settings;
+            ConnectionSettings draft;
+            if (Address.IsEditing && ConnectionSettings.TryCreate(Address.AddressText, Address.Kind, out draft)) initial = draft;
+            using (AddressHistoryDialog dialog = new AddressHistoryDialog(historyStore, initial))
+                if (dialog.ShowDialog(this) == DialogResult.OK) UseHistoryAddress(dialog.SelectedConnection);
+        }
+
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.L) && !popup && Address.EditingEnabled)
+            {
+                OpenAddressEditor();
+                return true;
+            }
+            return base.ProcessCmdKey(ref message, keyData);
         }
 
         internal Task InitializeAsync(CoreWebView2Environment sharedEnvironment)
@@ -413,7 +472,7 @@ namespace NasDesk
                             SetConnectionState("연결 중", NasTheme.Muted);
                             return;
                         }
-                        status.Text = core.Source == "about:blank" ? "웹 화면 준비 완료" : (connection.IsQuickConnect ? "QuickConnect · " : "HTTPS · ") + new Uri(core.Source).Authority;
+                        status.Text = (core.Source == "about:blank" ? "웹 화면 준비 완료" : (connection.IsQuickConnect ? "QuickConnect 보안 연결" : "HTTPS 보안 연결")) + historyWarning;
                         SetConnectionState("연결됨", NasTheme.Accent);
                     }
                     else
@@ -662,6 +721,14 @@ namespace NasDesk
                 activeNavigationId = 0;
                 settings.Url = address;
                 settings.Type = candidate.Type;
+                historyWarning = null;
+                status.ToolTipText = String.Empty;
+                try { historyStore.Add(candidate); }
+                catch (Exception historyError)
+                {
+                    historyWarning = " · 주소 기록 저장 실패";
+                    status.ToolTipText = "주소 기록을 저장하지 못했습니다: " + historyError.Message;
+                }
                 Address.SetAddress(address, candidate.Kind);
                 if (Ready) NavigateHome();
                 else await ReconnectAsync();

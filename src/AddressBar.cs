@@ -14,11 +14,13 @@ namespace NasDesk
         internal readonly ConnectionTypePicker TypePicker;
         internal readonly AddressLockButton LockButton;
         internal readonly ShellButton ConnectButton;
+        internal readonly ShellButton HistoryButton;
         private readonly ToolTip toolTips = new ToolTip();
         private bool editing;
         private bool editingEnabled = true;
         private bool applyingAddress;
         internal event EventHandler ConnectRequested;
+        internal event EventHandler HistoryRequested;
 
         internal string AddressText
         {
@@ -60,12 +62,7 @@ namespace NasDesk
             // scaled twice by .NET Framework at high DPI and can exceed its row.
             BackColor = NasTheme.Background;
             Font = new Font("Malgun Gothic", 9F);
-            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
-            inputFrame = new AddressInputFrame { Dock = DockStyle.Fill, BackColor = NasTheme.Background, Margin = new Padding(0, 0, 8, 0), Padding = new Padding(12, 0, 12, 0) };
+            inputFrame = new AddressInputFrame { BackColor = NasTheme.Background, Padding = new Padding(12, 0, 12, 0), TabIndex = 0 };
             inputFrame.Paint += delegate(object sender, PaintEventArgs e)
             {
                 if (inputFrame.Width < 2 || inputFrame.Height < 2) return;
@@ -91,14 +88,17 @@ namespace NasDesk
             inputFrame.Controls.Add(Input);
             inputFrame.Resize += delegate { LayoutInput(); inputFrame.Invalidate(true); };
             Input.FontChanged += delegate { LayoutInput(); };
-            LockButton = new AddressLockButton { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0), TabIndex = 1 };
-            ConnectButton = new ShellButton { Dock = DockStyle.Fill, Margin = Padding.Empty, Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
+            LockButton = new AddressLockButton { TabIndex = 1 };
+            ConnectButton = new ShellButton { Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Enabled = false, AccessibleName = "연결", TabIndex = 2 };
+            HistoryButton = new ShellButton { Text = "주소 기록", Glyph = ShellGlyph.History, AccessibleName = "NAS 주소 기록 관리", TabIndex = 3 };
             LockButton.Click += delegate { IsEditing = !IsEditing; };
             ConnectButton.Click += delegate { RequestConnection(); };
-            layout.Controls.Add(inputFrame, 0, 0);
-            layout.Controls.Add(LockButton, 1, 0);
-            layout.Controls.Add(ConnectButton, 2, 0);
-            Controls.Add(layout);
+            HistoryButton.Click += delegate {
+                if (!editingEnabled) return;
+                EventHandler handler = HistoryRequested;
+                if (handler != null) handler(this, EventArgs.Empty);
+            };
+            Controls.AddRange(new Control[] { inputFrame, LockButton, ConnectButton, HistoryButton });
             ResumeLayout(true);
             LayoutInput();
             UpdateEditingControls();
@@ -119,6 +119,22 @@ namespace NasDesk
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
+            if (HistoryButton == null) return;
+            float scale = CurrentAutoScaleDimensions.Width / 96F;
+            int gap = (int)Math.Round(8F * scale);
+            int historyWidth = (int)Math.Round(104F * scale);
+            int connectWidth = (int)Math.Round(86F * scale);
+            int lockWidth = (int)Math.Round((IsEditing ? 96F : 126F) * scale);
+            int right = ClientSize.Width;
+            HistoryButton.Bounds = new Rectangle(Math.Max(0, right - historyWidth), 0, historyWidth, ClientSize.Height);
+            right = HistoryButton.Left - gap;
+            if (IsEditing)
+            {
+                ConnectButton.Bounds = new Rectangle(Math.Max(0, right - connectWidth), 0, connectWidth, ClientSize.Height);
+                right = ConnectButton.Left - gap;
+            }
+            LockButton.Bounds = new Rectangle(Math.Max(0, right - lockWidth), 0, lockWidth, ClientSize.Height);
+            inputFrame.Bounds = new Rectangle(0, 0, Math.Max(1, LockButton.Left - gap), ClientSize.Height);
             LayoutInput();
         }
 
@@ -136,14 +152,23 @@ namespace NasDesk
 
         private void UpdateEditingControls()
         {
+            bool moveFocus = !IsEditing && (inputFrame.ContainsFocus || ConnectButton.ContainsFocus);
             Input.ReadOnly = !IsEditing;
             Input.ForeColor = IsEditing ? NasTheme.Text : NasTheme.Muted;
+            inputFrame.Visible = IsEditing;
+            ConnectButton.Visible = IsEditing;
             ConnectButton.Enabled = IsEditing;
-            TypePicker.Enabled = editingEnabled;
+            TypePicker.Enabled = editingEnabled && IsEditing;
+            LockButton.Visible = editingEnabled;
             LockButton.Enabled = editingEnabled;
             LockButton.Editing = IsEditing;
-            toolTips.SetToolTip(LockButton, IsEditing ? "변경을 취소하고 주소를 잠급니다 (Esc)." : "주소 편집 상태입니다. 주소를 클릭하거나 이 버튼을 누르면 편집합니다.");
-            toolTips.SetToolTip(Input, IsEditing ? "Enter로 연결 · Esc로 변경 취소" : "주소를 클릭하면 편집할 수 있습니다.");
+            HistoryButton.Visible = editingEnabled;
+            HistoryButton.Enabled = editingEnabled;
+            toolTips.SetToolTip(LockButton, IsEditing ? "변경을 취소하고 주소 입력줄을 숨깁니다 (Esc)." : "주소 입력줄을 엽니다 (Ctrl+L).");
+            toolTips.SetToolTip(Input, "Enter로 연결 · Esc로 변경 취소");
+            toolTips.SetToolTip(HistoryButton, "주소 기록 추가 · 선택 · 삭제");
+            PerformLayout();
+            if (moveFocus && editingEnabled) LockButton.Focus();
             inputFrame.Invalidate();
         }
 
@@ -186,6 +211,8 @@ namespace NasDesk
             LockButton.ForeColor = NasTheme.Text;
             ConnectButton.BackColor = NasTheme.Surface;
             ConnectButton.ForeColor = NasTheme.Text;
+            HistoryButton.BackColor = NasTheme.Surface;
+            HistoryButton.ForeColor = NasTheme.Text;
             Invalidate(true);
         }
 
@@ -198,6 +225,7 @@ namespace NasDesk
 
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)
         {
+            if (keyData == (Keys.Control | Keys.L) && EditingEnabled) { IsEditing = true; return true; }
             if (keyData == Keys.Escape && IsEditing) { IsEditing = false; return true; }
             if (keyData == Keys.Enter && IsEditing && Input.ContainsFocus) { RequestConnection(); return true; }
             return base.ProcessCmdKey(ref message, keyData);

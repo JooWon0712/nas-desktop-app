@@ -40,11 +40,11 @@ namespace NasDesk
 
         private void UpdateState()
         {
-            Text = editing ? "편집 중" : "주소 잠김";
-            AccessibleName = editing ? "NAS 주소 편집 중" : "NAS 주소 잠김";
+            Text = editing ? "취소" : "주소 변경";
+            AccessibleName = editing ? "NAS 주소 편집 취소" : "NAS 주소 변경";
             AccessibleDescription = editing
                 ? "NAS 주소를 편집하고 있습니다. 클릭하면 변경을 취소하고 주소를 잠급니다."
-                : "저장된 NAS 주소를 표시합니다. 클릭하면 주소를 편집합니다.";
+                : "주소 입력줄이 숨겨져 있습니다. 클릭하면 주소를 편집합니다.";
             Invalidate();
             if (IsHandleCreated) AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }

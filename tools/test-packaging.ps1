@@ -51,6 +51,7 @@ finally {
 
 # Deliberately contaminate the folder. Public packaging must still include only four files.
 Copy-Item -LiteralPath $fixturePrivateSettings -Destination $fixtureOutput
+Set-Content -LiteralPath (Join-Path $fixtureOutput 'address-history.json') -Encoding Ascii -Value '{"Entries":[{"Url":"https://private-history-fixture.invalid/","Type":"https"}]}'
 Set-Content -LiteralPath (Join-Path $fixtureOutput 'extra.dll') -Value 'not part of the app'
 New-Item -ItemType Directory -Path (Join-Path $fixtureOutput 'WebView2\Default') -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $fixtureOutput 'WebView2\Default\Cookies') -Value 'fake cookie data'
@@ -62,8 +63,8 @@ try {
     $actualNames = @($archive.Entries | ForEach-Object FullName | Sort-Object)
     $expectedNames = @('NasDesktop.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll' | Sort-Object)
     Assert-Check (($actualNames.Count -eq 4) -and (($actualNames -join '|') -eq ($expectedNames -join '|'))) 'Public ZIP contains only the executable and required three DLLs'
-    Assert-Check (-not ($actualNames | Where-Object { $_ -match 'connection|cookie|profile|extra' })) 'Private settings, browser data and unapproved files are excluded'
+    Assert-Check (-not ($actualNames | Where-Object { $_ -match 'connection|history|cookie|profile|extra' })) 'Private settings, address history, browser data and unapproved files are excluded'
 }
 finally { $archive.Dispose() }
 Assert-Check (-not (Get-ChildItem -LiteralPath $testRoot -Directory -Filter '.package-staging-*')) 'Temporary package staging is removed'
-Assert-Check (Test-Path -LiteralPath (Join-Path $fixtureOutput 'connection.local.json')) 'Packaging leaves the private source folder untouched'
+Assert-Check ((Test-Path -LiteralPath (Join-Path $fixtureOutput 'connection.local.json')) -and (Test-Path -LiteralPath (Join-Path $fixtureOutput 'address-history.json'))) 'Packaging leaves private source settings and address history untouched'

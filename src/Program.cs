@@ -14,6 +14,7 @@ namespace NasDesk
         internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NasDesk");
         internal static readonly string SettingsPath = Path.Combine(DataDirectory, "connection.json");
         internal static readonly string AppearancePath = Path.Combine(DataDirectory, "appearance.json");
+        internal static readonly string HistoryPath = Path.Combine(DataDirectory, "address-history.json");
         internal static readonly string ProfileDirectory = Path.Combine(DataDirectory, "WebView2");
 
         [STAThread]

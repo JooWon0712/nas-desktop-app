@@ -2,4 +2,6 @@
 dist/
 test-output/
 connection.local.json
+address-history.json
+address-history.json.*.tmp
 *.user

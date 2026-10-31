@@ -63,6 +63,8 @@ namespace NasDesk
             AppearanceSettingsTests.Run(output, Check);
             ThemeModeTests.Run(Check);
             ConnectionFailureInfoTests.Run(Check);
+            AddressHistoryStoreTests.Run(output, Check);
+            AddressHistoryDialogTests.Run(output, Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -270,35 +272,57 @@ namespace NasDesk
         {
             const string originalUrl = "https://nas-desk.test/";
             AddressBar address = window.Address;
+            AddressHistoryStore history = new AddressHistoryStore(uiSettingsPath + ".history.json");
+            Func<string> historySnapshot = () => String.Join("\n", history.Read().Select(item => item.Type + "\t" + item.Url));
             System.Drawing.Size originalSize = window.Size;
             window.Size = window.MinimumSize;
             window.PerformLayout();
+            Check(!address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+                && address.LockButton.Visible && address.HistoryButton.Visible
+                && address.LockButton.Left >= 0 && address.LockButton.Bottom <= address.ClientSize.Height
+                && address.LockButton.Right < address.HistoryButton.Left
+                && address.HistoryButton.Right == address.ClientSize.Width
+                && address.HistoryButton.Bottom <= address.ClientSize.Height,
+                "Collapsed address actions fit and align right at minimum window size");
+            address.LockButton.PerformClick();
+            window.PerformLayout();
             Check(address.Input.Parent.Bottom <= address.ClientSize.Height
+                && address.Input.Visible && address.TypePicker.Visible && address.ConnectButton.Visible
+                && address.Input.Parent.Right < address.LockButton.Left
                 && address.LockButton.Bottom <= address.ClientSize.Height
+                && address.LockButton.Right < address.ConnectButton.Left
                 && address.ConnectButton.Bottom <= address.ClientSize.Height
-                && address.ConnectButton.Right <= address.ClientSize.Width
+                && address.ConnectButton.Right < address.HistoryButton.Left
+                && address.HistoryButton.Right <= address.ClientSize.Width
                 && address.Input.Bounds.Bottom <= address.Input.Parent.ClientSize.Height
                 && address.Bottom <= address.Parent.ClientSize.Height
                 && address.Input.Width >= TextRenderer.MeasureText("https://", address.Input.Font).Width,
-                "Address input, lock and connection button fit at minimum window size");
+                "Visible address input, type, cancel, connection and history controls fit at minimum window size");
             Check(Math.Abs(address.Input.Top - (address.Input.Parent.ClientSize.Height - address.Input.Height - address.Input.Top)) <= 1,
                 "Address text stays vertically centered at the application DPI");
+            address.IsEditing = false;
             window.Size = originalSize;
             window.PerformLayout();
             string originalSettings = File.ReadAllText(uiSettingsPath);
             string originalPage = core.Source;
-            Check(!address.IsEditing && address.Input.ReadOnly && address.TypePicker.Enabled
+            string originalHistory = historySnapshot();
+            Check(!address.IsEditing && address.Input.ReadOnly && !address.TypePicker.Enabled
+                && !address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+                && address.LockButton.Visible && address.HistoryButton.Visible
                 && address.Kind == ConnectionKind.DirectHttps && !address.ConnectButton.Enabled && address.AddressText == originalUrl,
-                "Address starts read-only with connection action disabled");
+                "Saved connection hides the address editor while keeping change and history actions available");
 
             address.IsEditing = true;
-            Check(!address.Input.ReadOnly && address.TypePicker.Enabled && address.ConnectButton.Enabled, "Address edit ON enables input, connection type and connection");
+            Check(address.Input.Visible && !address.Input.ReadOnly && address.TypePicker.Visible && address.TypePicker.Enabled
+                && address.ConnectButton.Visible && address.ConnectButton.Enabled,
+                "Opening the address editor reveals input, connection type and connection action");
             address.AddressText = "https://uncommitted.test/";
             address.Kind = ConnectionKind.SynologyQuickConnect;
             address.IsEditing = false;
-            Check(address.Input.ReadOnly && address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
-                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
-                "Address edit OFF discards draft address and type without saving or navigating");
+            Check(address.Input.ReadOnly && !address.Input.Visible && !address.TypePicker.Enabled && address.Kind == ConnectionKind.DirectHttps
+                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage
+                && historySnapshot() == originalHistory,
+                "Closing the editor discards draft address and type without saving, recording or navigating");
 
             address.IsEditing = true;
             address.AddressText = "https://cancelled.test/";
@@ -306,18 +330,22 @@ namespace NasDesk
             Message escape = Message.Create(address.Input.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
             bool escapeHandled = address.PreProcessMessage(ref escape);
             Check(escapeHandled && !address.IsEditing && address.Kind == ConnectionKind.DirectHttps
-                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings,
+                && !address.Input.Visible && !address.ConnectButton.Visible
+                && address.AddressText == originalUrl && File.ReadAllText(uiSettingsPath) == originalSettings
+                && core.Source == originalPage && historySnapshot() == originalHistory,
                 "Local Escape command cancels both address and connection type");
 
             address.IsEditing = true;
             address.AddressText = "http://nas-desk-alternate.test/index.html";
             address.ConnectButton.PerformClick();
-            Check(address.IsEditing && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
-                "HTTP address submission preserves saved address and current page");
+            Check(address.IsEditing && address.Input.Visible && File.ReadAllText(uiSettingsPath) == originalSettings
+                && core.Source == originalPage && historySnapshot() == originalHistory,
+                "HTTP address submission preserves saved address, history and current page");
             address.AddressText = "https://user:secret@nas-desk-alternate.test/index.html";
             address.ConnectButton.PerformClick();
-            Check(address.IsEditing && File.ReadAllText(uiSettingsPath) == originalSettings && core.Source == originalPage,
-                "Credentials in address submission are rejected without changing settings");
+            Check(address.IsEditing && address.Input.Visible && File.ReadAllText(uiSettingsPath) == originalSettings
+                && core.Source == originalPage && historySnapshot() == originalHistory,
+                "Credentials in address submission are rejected without changing settings, history or document");
 
             const string alternateUrl = "https://nas-desk-alternate.test/index.html";
             core.SetVirtualHostNameToFolderMapping("nas-desk-alternate.test", fixture, CoreWebView2HostResourceAccessKind.DenyCors);
@@ -335,8 +363,10 @@ namespace NasDesk
                 Check(ConnectionSettings.Read(uiSettingsPath).Url == alternateUrl && address.AddressText == alternateUrl
                     && ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.DirectHttps
                     && !address.IsEditing && address.Input.ReadOnly && !address.ConnectButton.Enabled
+                    && !address.Input.Visible && !address.TypePicker.Visible && !address.ConnectButton.Visible
+                    && history.Read().Any(item => item.Url == alternateUrl && item.Kind == ConnectionKind.DirectHttps)
                     && core.Source == alternateUrl && core.DocumentTitle == "NAS Desk local fixture",
-                    "Valid address submission saves isolated settings, locks editor and loads new HTTPS origin");
+                    "Valid address submission saves isolated settings and history, hides the editor and loads the new HTTPS origin");
             }
             finally { core.NavigationCompleted -= navigated; }
 
@@ -348,7 +378,8 @@ namespace NasDesk
             address.ConnectButton.PerformClick();
             await WaitFor(() => core.Source == quickConnectUrl && core.DocumentTitle == "NAS Desk local fixture", 10000, "Explicit QuickConnect type fixture");
             Check(ConnectionSettings.Read(uiSettingsPath).Kind == ConnectionKind.SynologyQuickConnect
-                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing,
+                && address.Kind == ConnectionKind.SynologyQuickConnect && !address.IsEditing && !address.Input.Visible
+                && history.Read().Any(item => item.Url == quickConnectUrl && item.Kind == ConnectionKind.SynologyQuickConnect),
                 "Connection editor applies and saves an explicitly selected QuickConnect type");
             address.IsEditing = true;
             address.Kind = ConnectionKind.DirectHttps;
