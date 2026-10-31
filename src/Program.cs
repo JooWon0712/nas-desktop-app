@@ -36,7 +36,9 @@ namespace NasDesk
         {
             if (!File.Exists(path)) return new ConnectionSettings();
             ConnectionSettings settings = new JavaScriptSerializer().Deserialize<ConnectionSettings>(File.ReadAllText(path));
-            if (settings == null || !IsValid(settings.Url)) throw new InvalidDataException("NAS 주소는 https://로 시작하고 계정 정보를 포함하지 않아야 합니다.");
+            ConnectionAddress parsed;
+            if (settings == null || !ConnectionAddress.TryParse(settings.Url, out parsed)) throw new InvalidDataException("QuickConnect ID·주소 또는 HTTPS NAS 주소를 입력하세요. 계정 정보를 주소에 포함하지 마세요.");
+            settings.Url = parsed.Url;
             return settings;
         }
 
@@ -111,6 +113,7 @@ namespace NasDesk
     internal sealed class AddressDialog : Form
     {
         private readonly TextBox address;
+        private string selectedUrl;
         private AddressDialog(string current)
         {
             SuspendLayout();
@@ -124,18 +127,20 @@ namespace NasDesk
             MaximizeBox = MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             Label title = new Label { Text = "내 NAS에 연결", AutoSize = true, ForeColor = NasTheme.Text, Font = new Font("Malgun Gothic", 17F, FontStyle.Bold), Location = new Point(22, 16) };
-            Label label = new Label { Text = "이 PC에서 인증서 경고 없이 열리는 NAS의 직접 HTTPS 주소를 입력하세요.", AutoSize = true, ForeColor = NasTheme.Muted, Location = new Point(25, 62) };
-            address = new TextBox { Text = current ?? "https://", Location = new Point(25, 96), Width = 600, BackColor = NasTheme.Surface, ForeColor = NasTheme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 11F) };
-            Label hint = new Label { Text = "예: https://nas.example.com:5001/\nQuickConnect 시작 주소 대신 연결 완료 후의 직접 주소를 사용하세요.", ForeColor = NasTheme.Muted, Location = new Point(25, 132), Size = new Size(600, 36), Font = new Font("Malgun Gothic", 8.5F) };
+            Label label = new Label { Text = "QuickConnect ID·주소 또는 NAS의 HTTPS 주소를 입력하세요.", AutoSize = true, ForeColor = NasTheme.Muted, Location = new Point(25, 62) };
+            address = new TextBox { Text = current ?? "", Location = new Point(25, 96), Width = 600, BackColor = NasTheme.Surface, ForeColor = NasTheme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 11F) };
+            Label hint = new Label { Text = "예: my-nas / quickconnect.to/my-nas / https://nas.example.com:5001/\nQuickConnect 연결 주소는 자동으로 확인하며, 인증서 검증은 유지합니다.", ForeColor = NasTheme.Muted, Location = new Point(25, 132), Size = new Size(600, 36), Font = new Font("Malgun Gothic", 8.5F) };
             ShellButton save = new ShellButton { Text = "연결", Glyph = ShellGlyph.ArrowRight, Primary = true, Location = new Point(514, 182), Width = 111, Height = 38 };
             ShellButton cancel = new ShellButton { Text = "취소", Location = new Point(391, 182), Width = 111, Height = 38, DialogResult = DialogResult.Cancel };
             save.Click += delegate
             {
-                if (!ConnectionSettings.IsValid(address.Text.Trim()))
+                ConnectionAddress parsed;
+                if (!ConnectionAddress.TryParse(address.Text.Trim(), out parsed))
                 {
-                    MessageBox.Show(this, "https://로 시작하는 NAS 주소를 입력하세요. 아이디와 비밀번호는 로그인 화면에서 입력합니다.", Program.AppName);
+                    MessageBox.Show(this, "QuickConnect ID·주소 또는 HTTPS NAS 주소를 입력하세요. 아이디와 비밀번호는 DSM 로그인 화면에서 입력합니다.", Program.AppName);
                     return;
                 }
+                selectedUrl = parsed.Url;
                 DialogResult = DialogResult.OK;
             };
             Controls.AddRange(new Control[] { title, label, address, hint, save, cancel });
@@ -148,7 +153,7 @@ namespace NasDesk
         internal static string Ask(IWin32Window owner, string current)
         {
             using (AddressDialog dialog = new AddressDialog(current))
-                return dialog.ShowDialog(owner) == DialogResult.OK ? new Uri(dialog.address.Text.Trim()).AbsoluteUri : null;
+                return dialog.ShowDialog(owner) == DialogResult.OK ? dialog.selectedUrl : null;
         }
     }
 }

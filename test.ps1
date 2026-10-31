@@ -9,7 +9,7 @@ $arguments = @('/nologo','/target:exe','/platform:x64','/optimize+','/utf8output
 $references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll',(Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll'),(Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll'))
 $arguments += $references | ForEach-Object { "/reference:$_" }
 $arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*.cs' | ForEach-Object FullName
-$arguments += Join-Path $PSScriptRoot 'tests\Tests.cs'
+$arguments += Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'tests') -Filter '*.cs' | ForEach-Object FullName
 & $compiler @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
 Get-ChildItem -LiteralPath $appOutput -Filter '*.dll' | Copy-Item -Destination $output -Force

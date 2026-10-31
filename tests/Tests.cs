@@ -57,6 +57,8 @@ namespace NasDesk
 
         private static void UnitTests()
         {
+            ConnectionAddressTests.Run(Check);
+            QuickConnectResolverTests.Run(Check);
             Check(ConnectionSettings.IsValid("https://nas.example:5001/"), "HTTPS address accepted");
             Check(!ConnectionSettings.IsValid("http://nas.example/") && !ConnectionSettings.IsValid("https://user:secret@nas.example/"), "HTTP and credentials in URL rejected");
             Check(ConnectionSettings.IsInternal("https://nas.example:5001/webman/", "https://nas.example:5001/"), "DSM navigation accepted");
@@ -86,6 +88,7 @@ namespace NasDesk
 
         private static async Task RunBrowserTests(MainWindow window)
         {
+            await ConnectionSessionTests.RunAsync(Check);
             await WaitFor(() => window.Ready || window.InitializationError != null, 20000, "WebView2 initialization");
             if (window.InitializationError != null) throw window.InitializationError;
             Check(window.Ready && window.TrayVisible, "WebView2 and notification icon initialized");
@@ -117,6 +120,7 @@ namespace NasDesk
             core.Navigate("https://blocked.invalid/");
             await WaitFor(() => blocked, 5000, "External navigation blocked before request");
             Check(blocked, "Unconfigured origin blocked");
+            await QuickConnectBrowserTests.RunAsync(output, fixture, Check);
             await RunAddressTests(window, core);
             await RunRecoveryTests(window, core);
             await RunDownloadTests(window.Browser.CoreWebView2);

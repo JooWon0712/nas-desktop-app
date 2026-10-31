@@ -36,6 +36,10 @@ namespace NasDesk
         private bool browserNeedsRecreation;
         private bool waitForBrowserExit;
         private string lastLoadedUrl;
+        private ConnectionSession connection;
+        private Task navigationCheck;
+        private string pendingNavigationUrl;
+        private int navigationRequest;
         internal WebView2 Browser { get; private set; }
         internal bool Ready { get; private set; }
         internal Exception InitializationError { get; private set; }
@@ -47,7 +51,10 @@ namespace NasDesk
         internal MainWindow(ConnectionSettings settings, string profilePath, bool testMode, string settingsPath)
             : this(settings, profilePath, testMode, false, settingsPath) { }
 
-        private MainWindow(ConnectionSettings settings, string profilePath, bool testMode, bool popup, string settingsPath)
+        internal MainWindow(ConnectionSettings settings, string profilePath, bool testMode, string settingsPath, ConnectionSession session)
+            : this(settings, profilePath, testMode, false, settingsPath, session) { }
+
+        private MainWindow(ConnectionSettings settings, string profilePath, bool testMode, bool popup, string settingsPath, ConnectionSession session = null)
         {
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
@@ -57,6 +64,7 @@ namespace NasDesk
             this.testMode = testMode;
             this.popup = popup;
             this.settingsPath = settingsPath;
+            connection = session ?? new ConnectionSession(settings.Url);
             Text = Program.AppName;
             Font = new Font("Malgun Gothic", 9F);
             Size = new Size(1320, 900);
@@ -78,11 +86,11 @@ namespace NasDesk
             Label brandTitle = new Label { Text = "Synology NAS", Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = NasTheme.Text, AutoSize = true, Location = new Point(56, 13) };
             Label brandSubtitle = new Label { Text = "D E S K T O P   W O R K S P A C E", Font = new Font("Segoe UI", 7.3F), ForeColor = NasTheme.Muted, AutoSize = true, Location = new Point(59, 48) };
             brand.Controls.AddRange(new Control[] { logo, brandTitle, brandSubtitle });
-            Panel connection = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 24, 0, 21) };
+            Panel connectionPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 24, 0, 21) };
             connectionBadge = new Label { Text = "●  연결 준비", AutoSize = false, Dock = DockStyle.Right, Width = 115, TextAlign = ContentAlignment.MiddleCenter, BackColor = NasTheme.Surface, ForeColor = NasTheme.Muted, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold) };
-            connection.Controls.Add(connectionBadge);
+            connectionPanel.Controls.Add(connectionBadge);
             header.Controls.Add(brand, 0, 0);
-            header.Controls.Add(connection, 1, 0);
+            header.Controls.Add(connectionPanel, 1, 0);
             TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 48, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
@@ -212,14 +220,15 @@ namespace NasDesk
                 core.Settings.IsPasswordAutosaveEnabled = false;
                 core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
                 {
-                    if (!ConnectionSettings.IsInternal(e.Uri, settings.Url))
+                    if (!connection.Allows(e.Uri))
                     {
                         e.Cancel = true;
-                        if (!e.IsUserInitiated)
-                            ShowError("다른 호스트·포트로 자동 전환되어 연결을 중단했습니다. 일반 브라우저에서 접속을 완료한 뒤의 직접 HTTPS 주소를 입력해 주세요. 이 앱은 QuickConnect 자동 주소 전환을 지원하지 않습니다.");
-                        else status.Text = "다른 호스트·포트로의 이동을 차단했습니다. 직접 HTTPS 주소를 입력해 주세요.";
+                        if (connection.CanVerify(e.Uri)) QueueQuickConnectNavigation(e.Uri);
+                        else if (!e.IsUserInitiated) ShowError("설정한 NAS와 관련 없는 주소로 이동하려 해 연결을 중단했습니다. QuickConnect ID 또는 NAS 주소를 확인해 주세요.");
+                        else status.Text = "설정한 NAS와 관련 없는 주소로의 이동을 차단했습니다.";
                         return;
                     }
+                    InvalidatePendingNavigation();
                     errorPanel.Visible = false;
                     status.Text = "NAS에 안전하게 연결하고 있습니다.";
                     SetConnectionState("연결 중", NasTheme.Muted);
@@ -228,10 +237,17 @@ namespace NasDesk
                 {
                     if (e.IsSuccess)
                     {
-                        if (ConnectionSettings.IsValid(core.Source) && ConnectionSettings.IsInternal(core.Source, settings.Url))
+                        if (!connection.Allows(core.Source)) return;
+                        if (ConnectionSettings.IsValid(core.Source))
                             lastLoadedUrl = core.Source;
                         errorPanel.Visible = false;
-                        status.Text = "HTTPS · " + new Uri(settings.Url).Authority;
+                        if (connection.IsQuickConnect && core.Source != "about:blank" && !connection.IsNasOrigin(core.Source))
+                        {
+                            status.Text = "QuickConnect에서 NAS 연결 경로를 선택하고 있습니다.";
+                            SetConnectionState("연결 중", NasTheme.Muted);
+                            return;
+                        }
+                        status.Text = core.Source == "about:blank" ? "웹 화면 준비 완료" : (connection.IsQuickConnect ? "QuickConnect · " : "HTTPS · ") + new Uri(core.Source).Authority;
                         SetConnectionState("연결됨", NasTheme.Accent);
                     }
                     else if (e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
@@ -241,7 +257,7 @@ namespace NasDesk
                 core.WindowCloseRequested += delegate { if (popup) RequestExit(); };
                 core.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e)
                 {
-                    if (!ConnectionSettings.IsInternal(e.Uri, settings.Url)) e.State = CoreWebView2PermissionState.Deny;
+                    if (!connection.IsNasOrigin(e.Uri)) e.State = CoreWebView2PermissionState.Deny;
                 };
                 core.LaunchingExternalUriScheme += delegate(object sender, CoreWebView2LaunchingExternalUriSchemeEventArgs e) { e.Cancel = true; };
                 core.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs e) { HandleProcessFailure(e.ProcessFailedKind); };
@@ -260,6 +276,47 @@ namespace NasDesk
                 browserNeedsRecreation = true;
                 InitializationError = error;
                 ShowError("웹 화면을 준비하지 못했습니다. Microsoft Edge WebView2 Runtime 설치 상태를 확인하세요.\n\n" + error.Message);
+            }
+        }
+
+        private void QueueQuickConnectNavigation(string target)
+        {
+            pendingNavigationUrl = target;
+            navigationRequest++;
+            if (navigationCheck == null || navigationCheck.IsCompleted)
+                navigationCheck = VerifyQuickConnectNavigationAsync(connection);
+        }
+
+        private void InvalidatePendingNavigation()
+        {
+            pendingNavigationUrl = null;
+            navigationRequest++;
+        }
+
+        private async Task VerifyQuickConnectNavigationAsync(ConnectionSession session)
+        {
+            while (!IsDisposed && !Disposing && !exitRequested && Object.ReferenceEquals(connection, session) && pendingNavigationUrl != null)
+            {
+                string target = pendingNavigationUrl;
+                int request = navigationRequest;
+                pendingNavigationUrl = null;
+                status.Text = "QuickConnect가 안내한 NAS 연결 주소를 확인하고 있습니다.";
+                SetConnectionState("경로 확인", NasTheme.Muted);
+                try
+                {
+                    bool allowed = await session.VerifyAndAllowAsync(target);
+                    if (IsDisposed || Disposing || exitRequested || !Object.ReferenceEquals(connection, session)) return;
+                    if (request != navigationRequest) continue;
+                    if (allowed && Ready) Browser.CoreWebView2.Navigate(target);
+                    else if (Ready) ShowError("QuickConnect 연결 주소를 확인하지 못했습니다. NAS의 QuickConnect 설정과 네트워크 상태를 확인한 뒤 다시 연결해 주세요.");
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception)
+                {
+                    if (IsDisposed || Disposing || exitRequested || !Object.ReferenceEquals(connection, session)) return;
+                    if (request != navigationRequest) continue;
+                    ShowError("QuickConnect 연결 경로 확인에 실패했습니다. 네트워크와 NAS 상태를 확인한 뒤 다시 연결해 주세요. HTTPS 인증서 검증은 유지됩니다.");
+                }
             }
         }
 
@@ -289,7 +346,7 @@ namespace NasDesk
             else if (!popup) NavigateHome();
             if (Ready && popup)
             {
-                string target = ConnectionSettings.IsValid(lastLoadedUrl) && ConnectionSettings.IsInternal(lastLoadedUrl, settings.Url)
+                string target = ConnectionSettings.IsValid(lastLoadedUrl) && connection.Allows(lastLoadedUrl)
                     ? lastLoadedUrl : settings.Url;
                 errorPanel.Visible = false;
                 Browser.CoreWebView2.Navigate(target);
@@ -300,21 +357,24 @@ namespace NasDesk
         {
             e.Handled = true;
             if (exitRequested || IsDisposed || Disposing) return;
-            if (!ConnectionSettings.IsInternal(e.Uri, settings.Url))
-            {
-                if (e.IsUserInitiated) OpenExternal(e.Uri, true);
-                else status.Text = "다른 사이트의 자동 팝업을 차단했습니다.";
-                return;
-            }
+            ConnectionSession session = connection;
             CoreWebView2Deferral deferral = e.GetDeferral();
             MainWindow child = null;
             try
             {
-                child = new MainWindow(settings, profilePath, testMode, true, settingsPath);
+                bool allowed = session.Allows(e.Uri) || await session.VerifyAndAllowAsync(e.Uri);
+                if (exitRequested || IsDisposed || Disposing || !Object.ReferenceEquals(connection, session)) return;
+                if (!allowed)
+                {
+                    if (e.IsUserInitiated) OpenExternal(e.Uri, true);
+                    else status.Text = "다른 사이트의 자동 팝업을 차단했습니다.";
+                    return;
+                }
+                child = new MainWindow(settings, profilePath, testMode, true, settingsPath, session);
                 // Force HWND creation without displaying an uninitialized window.
                 IntPtr handle = child.Handle;
                 await child.InitializeAsync(environment);
-                if (IsDisposed || exitRequested || !child.Ready) { child.Dispose(); return; }
+                if (IsDisposed || exitRequested || !child.Ready || !Object.ReferenceEquals(connection, session)) { child.Dispose(); return; }
                 e.NewWindow = child.Browser.CoreWebView2;
                 children.Add(child);
                 MainWindow trackedChild = child;
@@ -322,6 +382,7 @@ namespace NasDesk
                 if (Visible) child.Show();
                 else hiddenChildren.Add(child);
             }
+            catch (OperationCanceledException) { if (child != null) child.Dispose(); }
             catch (Exception error)
             {
                 if (child != null) child.Dispose();
@@ -347,6 +408,7 @@ namespace NasDesk
         private void NavigateHome()
         {
             if (!Ready) return;
+            InvalidatePendingNavigation();
             errorPanel.Visible = false;
             Browser.CoreWebView2.Navigate(settings.Url);
         }
@@ -354,6 +416,7 @@ namespace NasDesk
         private void ReloadPage()
         {
             if (!Ready) return;
+            InvalidatePendingNavigation();
             if (errorPanel.Visible) NavigateHome();
             else Browser.Reload();
         }
@@ -361,17 +424,24 @@ namespace NasDesk
         private void ApplyAddress()
         {
             string value = Address.AddressText.Trim();
-            if (!ConnectionSettings.IsValid(value))
+            ConnectionAddress parsed;
+            if (!ConnectionAddress.TryParse(value, out parsed))
             {
-                status.Text = "https://로 시작하는 NAS 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
+                status.Text = "QuickConnect ID·주소 또는 HTTPS NAS 주소를 입력하세요. 주소에 아이디나 비밀번호를 넣지 마세요.";
                 Address.Input.Focus();
                 return;
             }
-            string address = new Uri(value).AbsoluteUri;
+            string address = parsed.Url;
             try
             {
                 new ConnectionSettings { Url = address }.Save(settingsPath);
                 foreach (MainWindow child in children.ToArray()) child.RequestExit();
+                connection.Dispose();
+                connection = new ConnectionSession(address);
+                pendingNavigationUrl = null;
+                navigationCheck = null;
+                navigationRequest++;
+                lastLoadedUrl = null;
                 settings.Url = address;
                 Address.SetAddress(address);
                 NavigateHome();
@@ -455,6 +525,7 @@ namespace NasDesk
         {
             if (disposing)
             {
+                if (!popup) connection.Dispose();
                 foreach (MainWindow child in children.ToArray()) child.Dispose();
                 if (tray != null)
                 {
