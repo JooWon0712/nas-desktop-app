@@ -6,6 +6,18 @@ NAS 웹 관리 화면을 전용 창에서 사용하는 **Windows 10/11 x64 전�
 
 릴리스는 GitHub Actions에서 빌드하며 **ZIP과 EXE의 출처 증명**을 제공합니다. [검증 방법](docs/SECURITY.md#배포-파일과-무결성-확인)을 참고하세요.
 
+## 실행 화면
+
+접속 주소와 NAS 이름·내부 IP는 예시 값으로 바꾼 화면입니다.
+
+### NAS 로그인
+
+![NAS Desktop 전용 창 안에 표시된 sample-nas 로그인 화면](docs/screenshots/nas-login.png)
+
+### NAS 연결 후 관리 화면
+
+![NAS Desktop에서 NAS 관리 화면과 시스템 상태를 확인하는 모습](docs/screenshots/nas-connected.png)
+
 ## 주요 기능
 
 - 작업 표시줄 최소화와 기본 창 X로 앱 종료
